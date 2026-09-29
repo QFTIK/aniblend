@@ -598,7 +598,7 @@ def set_outline_style(mat, style_key):
       'SOLID'  -> Continuous clean line
       'INK'    -> Hand-drawn organic ink with varied pen pressure
       'DASHED' -> Stylized dashed ink stroke
-      'SKETCH' -> Textured pencil / manga sketch
+      'SKETCH' -> Textured pencil / hand-drawn sketch
     """
     if not mat or not mat.node_tree:
         return
