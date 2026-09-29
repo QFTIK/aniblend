@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Blender temporary and backup files
+*.blend1
+*.blend2
+*.blend@
+*.blend@@
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE configs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Build archives
+*.zip
+dist/
+build/
