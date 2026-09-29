@@ -1,0 +1,33 @@
+schema_version = "1.0.0"
+id = "aniblend"
+version = "1.0.0"
+name = "AniBlend"
+tagline = "Fast Anime Cel-Shading and Stylized Outlines in Blender"
+maintainer = "Oleksii"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+license = [
+    "SPDX:GPL-3.0-or-later",
+]
+
+copyright = [
+    "2026 Oleksii",
+]
+
+website = "https://github.com/oleksii/aniblend"
+
+tags = [
+    "Material",
+    "Render",
+    "Lighting",
+]
+
+[build]
+paths_exclude_pattern = [
+    ".*",
+    "__pycache__",
+    "*.pyc",
+    "*.zip",
+    "tests",
+]
