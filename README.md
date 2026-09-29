@@ -1,48 +1,40 @@
-# AniBlend — Anime Cel-Shading & Outlines for Blender
+# AniBlend
 
-[![Blender 4.2+ | 5.0+](https://img.shields.io/badge/Blender-4.2%20%7C%205.0%2B-orange?logo=blender&logoColor=white)](https://www.blender.org/)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
-[![Version: 1.0.0](https://img.shields.io/badge/Version-1.0.0-emerald.svg)](https://github.com/QFTIK/aniblend/releases)
+A simple Blender add-on to give 3D models an anime cel-shaded look with customizable outlines.
 
-Fast, lightweight non-photorealistic rendering (NPR) add-on and extension for Blender 4.2+ and 5.0+. Turn any 3D model into stylized 2D anime art with interactive shadow steering and procedural inverted-hull outlines.
+Tested on Blender 4.2+ and 5.0+.
 
 ---
 
-## Key Features
+## What it does
 
-- **Interactive 3D Light Controller**: Generates an empty wireframe sphere per mesh. Rotate it (`R`) to steer shadow angles directly in the viewport without touching scene lights.
-- **Procedural Inverted-Hull Outlines**: Real-time EEVEE-Next outlines with zero Grease Pencil overhead.
-- **Hand-Drawn Chaos**: Adjust line jitter and organic waviness to avoid sterile 3D looks.
-- **4 Outline Styles**: `Solid`, `Ink/Pen`, `Dashed`, and `Sketch`.
-- **Secondary Stray Strokes**: Adds subtle sketchy pencil strokes around the silhouette.
-- **Color Presets**: One-click palettes including `Classic Cel`, `Soft Ghibli`, `Warm Sunset`, and `Cyberpunk`.
-- **Per-Mesh Isolation**: Each object maintains independent lighting directions and outline parameters.
+- **Shadow control with a sphere**: Clicking "Apply Anime Shader" adds a small helper sphere. Select it and press `R` to rotate shadows where you want them, without changing your actual scene lights.
+- **Outlines**: Inverted-hull outlines that work right in the viewport.
+- **Hand-drawn style**: You can add a bit of jitter/chaos to the lines so they don't look too rigid or digital.
+- **A few presets**: Quick color styles (Classic anime, Ghibli-inspired, Sunset, Cyberpunk).
+- **Per-object**: Each object can have its own shadow direction and outline settings.
 
 ---
 
-## Installation
+## How to install
 
-### Blender Extension (Blender 4.2+ / 5.0+)
-1. Go to **Edit > Preferences > Get Extensions**.
-2. Click top-right menu **⌄ > Install from Disk...**
-3. Select `aniblend-1.0.0.zip`.
-
-### Traditional Add-on
-1. Go to **Edit > Preferences > Add-ons**.
-2. Click top-right menu **⌄ > Install from Disk...**
-3. Select `aniblend.zip` and enable the checkbox.
+1. Download `aniblend-1.0.0.zip` (or `aniblend.zip`) from the [Releases](https://github.com/QFTIK/aniblend/releases) page.
+2. In Blender, go to **Edit > Preferences > Add-ons** (or **Get Extensions**).
+3. Click the top-right menu icon and choose **Install from Disk...**
+4. Pick the downloaded `.zip` file and enable it.
 
 ---
 
-## Quick Start
+## How to use
 
-1. Select your mesh in Object Mode.
-2. Open sidebar (`N`) > **AniBlend** tab.
-3. Click **Apply Anime Shader** — select the generated sphere and press `R` to position shadows.
-4. Click **Add Outlines** — adjust thickness, chaos, and style in the panel.
+1. Select your model.
+2. Press `N` to open the sidebar and find the **AniBlend** tab.
+3. Click **Apply Anime Shader**.
+4. Select the wireframe sphere near your model and press `R` to aim the shadow.
+5. (Optional) Click **Add Outlines** to add line art and adjust thickness or chaos.
 
 ---
 
 ## License
 
-GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE) for details.
+GPL-3.0
