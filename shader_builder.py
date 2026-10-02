@@ -44,17 +44,12 @@ def _get_light_socket_name(idx, prop):
         return mapping.get(prop, f"L{i} {prop.capitalize()}")
 
 
-def get_or_create_multilight_toon_nodegroup(num_lights=1):
+def _build_multilight_toon_nodegroup(ng, num_lights):
     """
-    Creates or updates the Anime_Toon_Shader node group supporting N independent lights.
-    Combines all directional cel bands and specular highlights seamlessly.
+    Internal: (re)builds the Anime_Toon_Shader node group interface and node network
+    for exactly num_lights lights.  Only called when a new group is created or the
+    light count changes.
     """
-    num_lights = max(1, int(num_lights))
-    name = NODE_GROUP_NAME if num_lights == 1 else f"{NODE_GROUP_NAME}_{num_lights}L"
-    ng = bpy.data.node_groups.get(name)
-    if not ng or ng.bl_idname != "ShaderNodeTree":
-        ng = bpy.data.node_groups.new(name=name, type="ShaderNodeTree")
-
     iface = ng.interface
     iface.clear()
 
@@ -295,12 +290,38 @@ def get_or_create_multilight_toon_nodegroup(num_lights=1):
     links.new(final_color.outputs[2], emit.inputs['Color'])
     links.new(emit.outputs['Emission'], node_out.inputs['Shader'])
 
+    # Stamp the node group with its light count so we can skip redundant rebuilds
+    ng["_anime_num_lights"] = num_lights
+
+
+def _count_ng_lights(ng):
+    """Returns the light count a node group was built for, or 0 if unknown."""
+    if ng and "_anime_num_lights" in ng:
+        return ng["_anime_num_lights"]
+    return 0
+
+
+def get_or_create_multilight_toon_nodegroup(num_lights=1):
+    """
+    Returns the Anime_Toon_Shader node group for N lights.
+    Only rebuilds the node network if the group doesn't exist yet or
+    was built for a different number of lights.
+    """
+    num_lights = max(1, int(num_lights))
+    name = NODE_GROUP_NAME if num_lights == 1 else f"{NODE_GROUP_NAME}_{num_lights}L"
+    ng = bpy.data.node_groups.get(name)
+
+    needs_build = False
+    if not ng or ng.bl_idname != "ShaderNodeTree":
+        ng = bpy.data.node_groups.new(name=name, type="ShaderNodeTree")
+        needs_build = True
+    elif _count_ng_lights(ng) != num_lights:
+        needs_build = True
+
+    if needs_build:
+        _build_multilight_toon_nodegroup(ng, num_lights)
+
     return ng
-
-
-def get_or_create_toon_nodegroup():
-    """Backwards-compatible wrapper returning the 1-light Anime_Toon_Shader nodegroup."""
-    return get_or_create_multilight_toon_nodegroup(1)
 
 
 def setup_single_light_drivers(normal_node, ctrl_empty):
@@ -353,6 +374,7 @@ def sync_material_lights(mesh_obj):
     """
     Synchronizes all anime materials on mesh_obj with its collection of anime_lights.
     Updates the nodegroup size, Normal nodes, drivers, and property values.
+    Preserves user-set Base Color and Shadow Color across node group swaps.
     """
     if not mesh_obj or not hasattr(mesh_obj, "anime_lights") or not mesh_obj.data:
         return
@@ -371,7 +393,38 @@ def sync_material_lights(mesh_obj):
         if not toon_node:
             toon_node = mat.node_tree.nodes.new('ShaderNodeGroup')
             toon_node.location = (0, 0)
-        toon_node.node_tree = ng
+
+        # Save user-set Base/Shadow colors BEFORE swapping node_tree
+        saved_base = None
+        saved_shadow = None
+        if toon_node.node_tree and toon_node.inputs:
+            if 'Base Color' in toon_node.inputs:
+                saved_base = tuple(toon_node.inputs['Base Color'].default_value)
+            if 'Shadow Color' in toon_node.inputs:
+                saved_shadow = tuple(toon_node.inputs['Shadow Color'].default_value)
+
+        # Only reassign node_tree if it actually changed (avoids resetting socket values)
+        if toon_node.node_tree is not ng:
+            toon_node.node_tree = ng
+
+        # Restore saved Base/Shadow colors (they get reset to interface defaults on swap)
+        if saved_base and 'Base Color' in toon_node.inputs:
+            # Only restore if the saved value was non-black (user had set it)
+            if saved_base[0] != 0.0 or saved_base[1] != 0.0 or saved_base[2] != 0.0:
+                toon_node.inputs['Base Color'].default_value = saved_base
+        if saved_shadow and 'Shadow Color' in toon_node.inputs:
+            if saved_shadow[0] != 0.0 or saved_shadow[1] != 0.0 or saved_shadow[2] != 0.0:
+                toon_node.inputs['Shadow Color'].default_value = saved_shadow
+
+        # If Base/Shadow are still black (new material or corrupted), set sane defaults
+        if 'Base Color' in toon_node.inputs:
+            bc = toon_node.inputs['Base Color'].default_value
+            if bc[0] == 0.0 and bc[1] == 0.0 and bc[2] == 0.0:
+                toon_node.inputs['Base Color'].default_value = (0.92, 0.78, 0.68, 1.0)
+        if 'Shadow Color' in toon_node.inputs:
+            sc = toon_node.inputs['Shadow Color'].default_value
+            if sc[0] == 0.0 and sc[1] == 0.0 and sc[2] == 0.0:
+                toon_node.inputs['Shadow Color'].default_value = (0.55, 0.42, 0.52, 1.0)
 
         # Wire Output Surface
         out_node = None
@@ -383,16 +436,6 @@ def sync_material_lights(mesh_obj):
             out_node = mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
             out_node.location = (450 + num_lights * 160, 0)
         mat.node_tree.links.new(toon_node.outputs['Shader'], out_node.inputs['Surface'])
-
-        # Ensure Base Color and Shadow Color have valid default colors
-        if 'Base Color' in toon_node.inputs:
-            bc = toon_node.inputs['Base Color'].default_value
-            if bc[0] == 0.0 and bc[1] == 0.0 and bc[2] == 0.0:
-                toon_node.inputs['Base Color'].default_value = (0.92, 0.78, 0.68, 1.0)
-        if 'Shadow Color' in toon_node.inputs:
-            sc = toon_node.inputs['Shadow Color'].default_value
-            if sc[0] == 0.0 and sc[1] == 0.0 and sc[2] == 0.0:
-                toon_node.inputs['Shadow Color'].default_value = (0.55, 0.42, 0.52, 1.0)
 
         # Process each light
         for idx in range(num_lights):
