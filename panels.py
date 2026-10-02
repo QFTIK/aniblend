@@ -18,16 +18,34 @@ from .operators import sync_stray_outline
 def _get_mesh_and_node(context):
     """Resolve the mesh and anime toon node from active object (mesh or controller)."""
     obj = context.active_object
-    if not obj:
-        return None, None
-
     mesh = None
-    if "anime_bound_mesh" in obj:
-        mesh = obj["anime_bound_mesh"]
-    elif obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
-        mesh = obj
-    else:
-        return None, None
+
+    if obj:
+        if "anime_bound_mesh" in obj:
+            candidate = obj["anime_bound_mesh"]
+            if candidate and candidate.name in bpy.data.objects:
+                mesh = candidate
+                # If active object is a light controller or pointer, sync active light index!
+                for idx, l in enumerate(mesh.anime_lights):
+                    if l.ctrl_obj == obj or (l.ctrl_obj and f"{l.ctrl_obj.name}_Pointer" == obj.name):
+                        if mesh.anime_active_light_index != idx:
+                            mesh.anime_active_light_index = idx
+                        break
+        elif obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
+            mesh = obj
+
+    # Fallback to selected objects if active object is temporarily unselected or None
+    if not mesh:
+        for o in context.selected_objects:
+            if o:
+                if "anime_bound_mesh" in o:
+                    candidate = o["anime_bound_mesh"]
+                    if candidate and candidate.name in bpy.data.objects:
+                        mesh = candidate
+                        break
+                elif o.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
+                    mesh = o
+                    break
 
     if mesh and mesh.active_material:
         node = find_anime_toon_node(mesh.active_material)

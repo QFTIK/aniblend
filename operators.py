@@ -22,14 +22,23 @@ from .shader_builder import (
 def _resolve_mesh(context):
     """Helper to get the bound mesh from any selected object (mesh, sphere controller, or pointer)."""
     obj = context.active_object
-    if not obj:
-        return None
-    if "anime_bound_mesh" in obj:
-        mesh = obj["anime_bound_mesh"]
-        if mesh and mesh.name in bpy.data.objects:
-            return mesh
-    if obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
-        return obj
+    if obj:
+        if "anime_bound_mesh" in obj:
+            mesh = obj["anime_bound_mesh"]
+            if mesh and mesh.name in bpy.data.objects:
+                return mesh
+        if obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
+            return obj
+
+    # Fallback to selected objects if active is None or temporarily deselected
+    for o in context.selected_objects:
+        if o:
+            if "anime_bound_mesh" in o:
+                mesh = o["anime_bound_mesh"]
+                if mesh and mesh.name in bpy.data.objects:
+                    return mesh
+            if o.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
+                return o
     return None
 
 
@@ -351,7 +360,7 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
                 break
 
         # Select controller so user can immediately rotate it with R
-        for o in context.view_layer.objects:
+        for o in list(context.selected_objects):
             o.select_set(False)
         ctrl.select_set(True)
         context.view_layer.objects.active = ctrl
@@ -450,7 +459,7 @@ class ANIME_OT_light_add(bpy.types.Operator):
         sync_material_lights(mesh)
 
         # Select the new controller empty in 3D viewport
-        for o in context.view_layer.objects:
+        for o in list(context.selected_objects):
             o.select_set(False)
         ctrl.select_set(True)
         context.view_layer.objects.active = ctrl
@@ -502,6 +511,14 @@ class ANIME_OT_light_move(bpy.types.Operator):
         # Re-sync materials with new light order
         sync_material_lights(mesh)
 
+        if mesh.anime_lights and mesh.anime_lights[0].ctrl_obj:
+            mesh[CTRL_PROP] = mesh.anime_lights[0].ctrl_obj
+
+        # Keep mesh active
+        if mesh and mesh.name in bpy.data.objects:
+            context.view_layer.objects.active = mesh
+            mesh.select_set(True)
+
         if context.area:
             context.area.tag_redraw()
 
@@ -547,16 +564,23 @@ class ANIME_OT_light_remove(bpy.types.Operator):
         mesh.anime_lights.remove(idx)
         mesh.anime_active_light_index = max(0, min(idx, len(mesh.anime_lights) - 1))
 
+        # Re-sync all materials with remaining lights
         sync_material_lights(mesh)
 
-        # Select new active light's controller
-        if mesh.anime_lights:
-            new_active = mesh.anime_lights[mesh.anime_active_light_index]
-            if new_active.ctrl_obj and new_active.ctrl_obj.name in bpy.data.objects:
-                for o in context.view_layer.objects:
+        # Update primary CTRL_PROP reference on mesh
+        if mesh.anime_lights and mesh.anime_lights[0].ctrl_obj:
+            mesh[CTRL_PROP] = mesh.anime_lights[0].ctrl_obj
+
+        # Keep mesh as the active selected object in viewport so user never loses focus!
+        if mesh and mesh.name in bpy.data.objects:
+            for o in list(context.selected_objects):
+                if o != mesh:
                     o.select_set(False)
-                new_active.ctrl_obj.select_set(True)
-                context.view_layer.objects.active = new_active.ctrl_obj
+            mesh.select_set(True)
+            context.view_layer.objects.active = mesh
+
+        if context.area:
+            context.area.tag_redraw()
 
         self.report({'INFO'}, "Light source removed.")
         return {'FINISHED'}
@@ -683,7 +707,7 @@ class ANIME_OT_light_select(bpy.types.Operator):
             mesh.anime_active_light_index = idx
             ctrl = mesh.anime_lights[idx].ctrl_obj
             if ctrl and ctrl.name in bpy.data.objects:
-                for o in context.view_layer.objects:
+                for o in list(context.selected_objects):
                     o.select_set(False)
                 ctrl.select_set(True)
                 context.view_layer.objects.active = ctrl
@@ -1000,23 +1024,35 @@ classes = (
 )
 
 
+_cleanup_in_progress = False
+
 @bpy.app.handlers.persistent
 def _cleanup_orphaned_anime_controllers(scene, depsgraph=None):
     """
     Automatically cleans up sphere controllers and pointers when their
     bound mesh object is deleted from the scene.
     """
+    global _cleanup_in_progress
+    if _cleanup_in_progress:
+        return
+
     to_delete = []
-    for obj in list(bpy.data.objects):
+    for obj in bpy.data.objects:
         if "anime_bound_mesh" in obj:
             bound = obj.get("anime_bound_mesh")
-            if not bound or bound.name not in bpy.data.objects:
+            if not bound or (hasattr(bound, "name") and bound.name not in bpy.data.objects):
                 to_delete.append(obj)
-    for obj in to_delete:
+
+    if to_delete:
+        _cleanup_in_progress = True
         try:
-            bpy.data.objects.remove(obj, do_unlink=True)
+            for obj in to_delete:
+                if obj.name in bpy.data.objects:
+                    bpy.data.objects.remove(obj, do_unlink=True)
         except Exception:
             pass
+        finally:
+            _cleanup_in_progress = False
 
 
 def register():
