@@ -209,13 +209,13 @@ class ANIME_PT_main_panel(bpy.types.Panel):
         col = layout.column(align=True)
         col.scale_y = 1.25
 
-        if active_tab in {'ALL', 'LIGHT'}:
+        if active_tab == 'LIGHT':
             if not node:
                 col.operator("anime.apply_shader", text="Apply Anime Shader", icon='SHADING_RENDERED')
             else:
                 col.operator("anime.apply_shader", text="Reset / Re-apply Shader", icon='FILE_REFRESH')
 
-        if active_tab in {'ALL', 'OUTLINE'}:
+        elif active_tab == 'OUTLINE':
             mod = mesh.modifiers.get(OUTLINE_MOD_NAME)
             if not mod:
                 col.operator("anime.add_outline", text="Add Outlines", icon='LINE_DATA')
@@ -239,7 +239,7 @@ class ANIME_PT_light_direction(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        if context.scene.anime_active_tab not in {'ALL', 'LIGHT'}:
+        if context.scene.anime_active_tab != 'LIGHT':
             return False
         mesh, node = _get_mesh_and_node(context)
         return mesh is not None and node is not None
@@ -271,7 +271,7 @@ class ANIME_PT_light_colors(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        if context.scene.anime_active_tab not in {'ALL', 'LIGHT'}:
+        if context.scene.anime_active_tab != 'LIGHT':
             return False
         mesh, node = _get_mesh_and_node(context)
         return mesh is not None and node is not None
@@ -299,7 +299,7 @@ class ANIME_PT_light_tuning(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        if context.scene.anime_active_tab not in {'ALL', 'LIGHT'}:
+        if context.scene.anime_active_tab != 'LIGHT':
             return False
         mesh, node = _get_mesh_and_node(context)
         return mesh is not None and node is not None
@@ -331,7 +331,7 @@ class ANIME_PT_light_presets(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        if context.scene.anime_active_tab not in {'ALL', 'LIGHT'}:
+        if context.scene.anime_active_tab != 'LIGHT':
             return False
         mesh, node = _get_mesh_and_node(context)
         return mesh is not None and node is not None
@@ -365,7 +365,7 @@ class ANIME_PT_outline_settings(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        if context.scene.anime_active_tab not in {'ALL', 'OUTLINE'}:
+        if context.scene.anime_active_tab != 'OUTLINE':
             return False
         mesh, _ = _get_mesh_and_node(context)
         return mesh is not None and mesh.modifiers.get(OUTLINE_MOD_NAME) is not None
@@ -394,7 +394,7 @@ class ANIME_PT_outline_style(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        if context.scene.anime_active_tab not in {'ALL', 'OUTLINE'}:
+        if context.scene.anime_active_tab != 'OUTLINE':
             return False
         mesh, _ = _get_mesh_and_node(context)
         return mesh is not None and mesh.modifiers.get(OUTLINE_MOD_NAME) is not None
@@ -426,7 +426,7 @@ class ANIME_PT_outline_stray(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        if context.scene.anime_active_tab not in {'ALL', 'OUTLINE'}:
+        if context.scene.anime_active_tab != 'OUTLINE':
             return False
         mesh, _ = _get_mesh_and_node(context)
         return mesh is not None and mesh.modifiers.get(OUTLINE_MOD_NAME) is not None
@@ -464,13 +464,12 @@ classes = (
 
 def register():
     bpy.types.Scene.anime_active_tab = bpy.props.EnumProperty(
-        name="Filter",
+        name="Tab",
         items=[
-            ('ALL', "All", "Show all anime shading and outline controls"),
             ('LIGHT', "Light", "Lighting direction, colors, and cel shading"),
             ('OUTLINE', "Outline", "Anime ink outlines and sketch stray strokes"),
         ],
-        default='ALL',
+        default='LIGHT',
         update=_update_tab,
     )
 
