@@ -14,231 +14,307 @@ OUTLINE_STRAY_MAT_NAME = "M_Anime_Stray_Outline"
 OUTLINE_STRAY_MOD_NAME = "Anime_Stray_Outline"
 
 
-def get_or_create_toon_nodegroup():
+def _get_light_socket_name(idx, prop):
     """
-    Creates or updates the Anime_Toon_Shader node group using pure MatCap approach:
-      Normal · LightDir = cel factor  (no scene lights needed)
+    Returns consistent socket names for light at index (0-based).
+    For index 0 (Light 1), keeps legacy socket names for 100% backward compatibility.
+    """
+    i = idx + 1
+    if i == 1:
+        mapping = {
+            'direction': 'Light Direction',
+            'color': 'L1 Color',
+            'strength': 'L1 Strength',
+            'position': 'Shadow Position',
+            'softness': 'Shadow Softness',
+            'specular': 'Specular Size',
+            'enabled': 'L1 Enabled',
+        }
+        return mapping.get(prop, f"L1 {prop.capitalize()}")
+    else:
+        mapping = {
+            'direction': f'L{i} Direction',
+            'color': f'L{i} Color',
+            'strength': f'L{i} Strength',
+            'position': f'L{i} Shadow Position',
+            'softness': f'L{i} Shadow Softness',
+            'specular': f'L{i} Specular Size',
+            'enabled': f'L{i} Enabled',
+        }
+        return mapping.get(prop, f"L{i} {prop.capitalize()}")
 
-    Accepts 'Light Direction' vector as an input socket so each material
-    can have its own independent light controller without driver crosstalk.
-    Never removes the group node tree so existing materials stay intact.
+
+def get_or_create_multilight_toon_nodegroup(num_lights=1):
     """
-    ng = bpy.data.node_groups.get(NODE_GROUP_NAME)
+    Creates or updates the Anime_Toon_Shader node group supporting N independent lights.
+    Combines all directional cel bands and specular highlights seamlessly.
+    """
+    num_lights = max(1, int(num_lights))
+    name = NODE_GROUP_NAME if num_lights == 1 else f"{NODE_GROUP_NAME}_{num_lights}L"
+    ng = bpy.data.node_groups.get(name)
     if not ng or ng.bl_idname != "ShaderNodeTree":
-        ng = bpy.data.node_groups.new(name=NODE_GROUP_NAME, type="ShaderNodeTree")
+        ng = bpy.data.node_groups.new(name=name, type="ShaderNodeTree")
 
     iface = ng.interface
+    iface.clear()
 
-    # Clean up legacy manga sockets if present
-    for item in list(iface.items_tree):
-        if getattr(item, 'item_type', None) == 'SOCKET' and getattr(item, 'in_out', None) == 'INPUT':
-            if item.name.startswith("Manga"):
-                try:
-                    iface.remove(item)
-                except Exception:
-                    pass
+    # 1. Global Color Sockets
+    iface.new_socket(name="Base Color", in_out='INPUT', socket_type='NodeSocketColor').default_value = (0.92, 0.78, 0.68, 1.0)
+    iface.new_socket(name="Shadow Color", in_out='INPUT', socket_type='NodeSocketColor').default_value = (0.55, 0.42, 0.52, 1.0)
 
-    # Ensure all required sockets exist on the interface
-    existing_inputs = {
-        item.name: item for item in iface.items_tree
-        if getattr(item, 'item_type', None) == 'SOCKET' and getattr(item, 'in_out', None) == 'INPUT'
-    }
+    # 2. Per-Light Sockets
+    for idx in range(num_lights):
+        dir_name = _get_light_socket_name(idx, 'direction')
+        col_name = _get_light_socket_name(idx, 'color')
+        str_name = _get_light_socket_name(idx, 'strength')
+        pos_name = _get_light_socket_name(idx, 'position')
+        sft_name = _get_light_socket_name(idx, 'softness')
+        spc_name = _get_light_socket_name(idx, 'specular')
+        en_name = _get_light_socket_name(idx, 'enabled')
 
-    if "Base Color" not in existing_inputs:
-        s = iface.new_socket(name="Base Color", in_out='INPUT', socket_type='NodeSocketColor')
-        s.default_value = (0.92, 0.78, 0.68, 1.0)
+        iface.new_socket(name=dir_name, in_out='INPUT', socket_type='NodeSocketVector').default_value = (0.0, 0.0, 1.0)
+        iface.new_socket(name=col_name, in_out='INPUT', socket_type='NodeSocketColor').default_value = (1.0, 1.0, 1.0, 1.0)
+        s_str = iface.new_socket(name=str_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_str.default_value = 1.0
+        s_str.min_value = 0.0
+        s_str.max_value = 5.0
 
-    if "Shadow Color" not in existing_inputs:
-        s = iface.new_socket(name="Shadow Color", in_out='INPUT', socket_type='NodeSocketColor')
-        s.default_value = (0.55, 0.42, 0.52, 1.0)
+        s_pos = iface.new_socket(name=pos_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_pos.default_value = 0.4
+        s_pos.min_value = -1.0
+        s_pos.max_value = 1.0
 
-    if "Shadow Position" not in existing_inputs:
-        s = iface.new_socket(name="Shadow Position", in_out='INPUT', socket_type='NodeSocketFloat')
-        s.default_value = 0.4
-        s.min_value = -1.0
-        s.max_value = 1.0
+        s_sft = iface.new_socket(name=sft_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_sft.default_value = 0.08
+        s_sft.min_value = 0.001
+        s_sft.max_value = 1.0
 
-    if "Shadow Softness" not in existing_inputs:
-        s = iface.new_socket(name="Shadow Softness", in_out='INPUT', socket_type='NodeSocketFloat')
-        s.default_value = 0.08
-        s.min_value = 0.001
-        s.max_value = 1.0
+        s_spc = iface.new_socket(name=spc_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_spc.default_value = 0.10
+        s_spc.min_value = 0.0
+        s_spc.max_value = 0.8
 
-    if "Specular Size" not in existing_inputs:
-        s = iface.new_socket(name="Specular Size", in_out='INPUT', socket_type='NodeSocketFloat')
-        s.default_value = 0.10
-        s.min_value = 0.0
-        s.max_value = 0.8
+        s_en = iface.new_socket(name=en_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_en.default_value = 1.0
+        s_en.min_value = 0.0
+        s_en.max_value = 1.0
 
-    if "Light Direction" not in existing_inputs:
-        s = iface.new_socket(name="Light Direction", in_out='INPUT', socket_type='NodeSocketVector')
-        s.default_value = (0.0, 0.0, 1.0)
+    iface.new_socket(name="Shader", in_out='OUTPUT', socket_type='NodeSocketShader')
 
-    has_output = any(
-        getattr(item, 'item_type', None) == 'SOCKET' and getattr(item, 'in_out', None) == 'OUTPUT'
-        for item in iface.items_tree
-    )
-    if not has_output:
-        iface.new_socket(name="Shader", in_out='OUTPUT', socket_type='NodeSocketShader')
-
-    # --- Nodes ---
+    # Build Internal Node Network
     nodes = ng.nodes
     links = ng.links
     nodes.clear()
 
     node_in = nodes.new('NodeGroupInput')
-    node_in.location = (-1100, 0)
+    node_in.location = (-1300, 0)
     node_out = nodes.new('NodeGroupOutput')
-    node_out.location = (1150, 0)
+    node_out.location = (1600, 0)
 
-    # ─── 1. CEL SHADOW (Normal · LightDir) ──────────────────────────────
     geom = nodes.new('ShaderNodeNewGeometry')
-    geom.location = (-900, 300)
+    geom.location = (-1300, 400)
 
-    # Normalized Light Direction from material input socket
-    norm_light = nodes.new('ShaderNodeVectorMath')
-    norm_light.name = "NormLight"
-    norm_light.operation = 'NORMALIZE'
-    norm_light.location = (-900, 100)
-    links.new(node_in.outputs['Light Direction'], norm_light.inputs[0])
-
-    # Dot product: surface normal · light direction
-    dot_light = nodes.new('ShaderNodeVectorMath')
-    dot_light.operation = 'DOT_PRODUCT'
-    dot_light.location = (-650, 200)
-    links.new(geom.outputs['Normal'], dot_light.inputs[0])
-    links.new(norm_light.outputs['Vector'], dot_light.inputs[1])
-
-    # Shadow bounds [pos - soft .. pos + soft]
-    sub = nodes.new('ShaderNodeMath')
-    sub.operation = 'SUBTRACT'
-    sub.location = (-650, -50)
-    links.new(node_in.outputs['Shadow Position'], sub.inputs[0])
-    links.new(node_in.outputs['Shadow Softness'], sub.inputs[1])
-
-    add = nodes.new('ShaderNodeMath')
-    add.operation = 'ADD'
-    add.location = (-650, -200)
-    links.new(node_in.outputs['Shadow Position'], add.inputs[0])
-    links.new(node_in.outputs['Shadow Softness'], add.inputs[1])
-
-    # Smoothstep cel transition
-    map_cel = nodes.new('ShaderNodeMapRange')
-    map_cel.interpolation_type = 'SMOOTHSTEP'
-    map_cel.clamp = True
-    map_cel.location = (-400, 200)
-    links.new(dot_light.outputs['Value'], map_cel.inputs['Value'])
-    links.new(sub.outputs['Value'], map_cel.inputs['From Min'])
-    links.new(add.outputs['Value'], map_cel.inputs['From Max'])
-
-    # Mix: Factor=0 → Shadow, Factor=1 → Base
-    mix_cel = nodes.new('ShaderNodeMix')
-    mix_cel.data_type = 'RGBA'
-    mix_cel.clamp_factor = True
-    mix_cel.location = (-150, 200)
-    links.new(map_cel.outputs['Result'],       mix_cel.inputs[0])
-    links.new(node_in.outputs['Shadow Color'], mix_cel.inputs[6])  # A=shadow
-    links.new(node_in.outputs['Base Color'],   mix_cel.inputs[7])  # B=base
-
-    # ─── 2. SPECULAR (Reflect · LightDir) ───────────────────────────────
     reflect = nodes.new('ShaderNodeVectorMath')
     reflect.operation = 'REFLECT'
-    reflect.location = (-650, -400)
+    reflect.location = (-1100, -400)
     links.new(geom.outputs['Incoming'], reflect.inputs[0])
     links.new(geom.outputs['Normal'], reflect.inputs[1])
 
-    dot_spec = nodes.new('ShaderNodeVectorMath')
-    dot_spec.operation = 'DOT_PRODUCT'
-    dot_spec.location = (-400, -400)
-    links.new(reflect.outputs['Vector'], dot_spec.inputs[0])
-    links.new(norm_light.outputs['Vector'], dot_spec.inputs[1])
+    cel_factors = []
+    lit_colors = []
+    spec_colors = []
 
-    spec_thresh = nodes.new('ShaderNodeMath')
-    spec_thresh.operation = 'SUBTRACT'
-    spec_thresh.inputs[0].default_value = 1.0
-    spec_thresh.location = (-400, -570)
-    links.new(node_in.outputs['Specular Size'], spec_thresh.inputs[1])
+    for idx in range(num_lights):
+        y_off = 400 - idx * 600
 
-    spec_step = nodes.new('ShaderNodeMath')
-    spec_step.operation = 'GREATER_THAN'
-    spec_step.location = (-200, -400)
-    links.new(dot_spec.outputs['Value'], spec_step.inputs[0])
-    links.new(spec_thresh.outputs['Value'], spec_step.inputs[1])
+        dir_name = _get_light_socket_name(idx, 'direction')
+        col_name = _get_light_socket_name(idx, 'color')
+        str_name = _get_light_socket_name(idx, 'strength')
+        pos_name = _get_light_socket_name(idx, 'position')
+        sft_name = _get_light_socket_name(idx, 'softness')
+        spc_name = _get_light_socket_name(idx, 'specular')
+        en_name = _get_light_socket_name(idx, 'enabled')
 
-    # Mask specular so it NEVER appears in shadow
-    spec_masked = nodes.new('ShaderNodeMath')
-    spec_masked.operation = 'MULTIPLY'
-    spec_masked.location = (-50, -400)
-    links.new(spec_step.outputs['Value'], spec_masked.inputs[0])
-    links.new(map_cel.outputs['Result'],  spec_masked.inputs[1])
+        norm_l = nodes.new('ShaderNodeVectorMath')
+        norm_l.operation = 'NORMALIZE'
+        norm_l.location = (-1050, y_off)
+        links.new(node_in.outputs[dir_name], norm_l.inputs[0])
 
-    # Softened white highlight
-    white = nodes.new('ShaderNodeRGB')
-    white.location = (-200, -580)
-    white.outputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
+        dot_l = nodes.new('ShaderNodeVectorMath')
+        dot_l.operation = 'DOT_PRODUCT'
+        dot_l.location = (-850, y_off)
+        links.new(geom.outputs['Normal'], dot_l.inputs[0])
+        links.new(norm_l.outputs['Vector'], dot_l.inputs[1])
 
-    spec_soften = nodes.new('ShaderNodeMix')
-    spec_soften.data_type = 'RGBA'
-    spec_soften.clamp_factor = True
-    spec_soften.inputs[0].default_value = 0.55
-    spec_soften.location = (-50, -200)
-    links.new(node_in.outputs['Base Color'], spec_soften.inputs[6])
-    links.new(white.outputs[0],              spec_soften.inputs[7])
+        sub = nodes.new('ShaderNodeMath')
+        sub.operation = 'SUBTRACT'
+        sub.location = (-850, y_off - 150)
+        links.new(node_in.outputs[pos_name], sub.inputs[0])
+        links.new(node_in.outputs[sft_name], sub.inputs[1])
 
-    mix_spec = nodes.new('ShaderNodeMix')
-    mix_spec.data_type = 'RGBA'
-    mix_spec.clamp_factor = True
-    mix_spec.location = (120, 150)
-    links.new(spec_masked.outputs['Value'],  mix_spec.inputs[0])
-    links.new(mix_cel.outputs[2],            mix_spec.inputs[6])  # A=cel result
-    links.new(spec_soften.outputs[2],        mix_spec.inputs[7])  # B=specular highlight
+        add = nodes.new('ShaderNodeMath')
+        add.operation = 'ADD'
+        add.location = (-850, y_off - 300)
+        links.new(node_in.outputs[pos_name], add.inputs[0])
+        links.new(node_in.outputs[sft_name], add.inputs[1])
 
-    # ─── 3. FINAL EMISSION OUTPUT ───────────────────────────────────────
+        map_c = nodes.new('ShaderNodeMapRange')
+        map_c.interpolation_type = 'SMOOTHSTEP'
+        map_c.clamp = True
+        map_c.location = (-650, y_off)
+        links.new(dot_l.outputs['Value'], map_c.inputs['Value'])
+        links.new(sub.outputs['Value'], map_c.inputs['From Min'])
+        links.new(add.outputs['Value'], map_c.inputs['From Max'])
+
+        c_en = nodes.new('ShaderNodeMath')
+        c_en.operation = 'MULTIPLY'
+        c_en.location = (-450, y_off)
+        links.new(map_c.outputs['Result'], c_en.inputs[0])
+        links.new(node_in.outputs[en_name], c_en.inputs[1])
+
+        c_str = nodes.new('ShaderNodeMath')
+        c_str.operation = 'MULTIPLY'
+        c_str.location = (-250, y_off)
+        links.new(c_en.outputs['Value'], c_str.inputs[0])
+        links.new(node_in.outputs[str_name], c_str.inputs[1])
+        cel_factors.append(c_str.outputs['Value'])
+
+        # Lit color contribution
+        mix_c = nodes.new('ShaderNodeMix')
+        mix_c.data_type = 'RGBA'
+        mix_c.blend_type = 'MIX'
+        mix_c.inputs[6].default_value = (0, 0, 0, 1)
+        mix_c.location = (-50, y_off)
+        links.new(c_str.outputs['Value'], mix_c.inputs[0])
+        links.new(node_in.outputs[col_name], mix_c.inputs[7])
+        lit_colors.append(mix_c.outputs[2])
+
+        # Specular
+        dot_s = nodes.new('ShaderNodeVectorMath')
+        dot_s.operation = 'DOT_PRODUCT'
+        dot_s.location = (-850, y_off - 450)
+        links.new(reflect.outputs['Vector'], dot_s.inputs[0])
+        links.new(norm_l.outputs['Vector'], dot_s.inputs[1])
+
+        thresh = nodes.new('ShaderNodeMath')
+        thresh.operation = 'SUBTRACT'
+        thresh.inputs[0].default_value = 1.0
+        thresh.location = (-650, y_off - 450)
+        links.new(node_in.outputs[spc_name], thresh.inputs[1])
+
+        is_spec = nodes.new('ShaderNodeMath')
+        is_spec.operation = 'GREATER_THAN'
+        is_spec.location = (-450, y_off - 450)
+        links.new(dot_s.outputs['Value'], is_spec.inputs[0])
+        links.new(thresh.outputs['Value'], is_spec.inputs[1])
+
+        s_mask = nodes.new('ShaderNodeMath')
+        s_mask.operation = 'MULTIPLY'
+        s_mask.location = (-250, y_off - 450)
+        links.new(is_spec.outputs['Value'], s_mask.inputs[0])
+        links.new(c_en.outputs['Value'], s_mask.inputs[1])
+
+        s_str = nodes.new('ShaderNodeMath')
+        s_str.operation = 'MULTIPLY'
+        s_str.location = (-50, y_off - 450)
+        links.new(s_mask.outputs['Value'], s_str.inputs[0])
+        links.new(node_in.outputs[str_name], s_str.inputs[1])
+
+        mix_s = nodes.new('ShaderNodeMix')
+        mix_s.data_type = 'RGBA'
+        mix_s.inputs[6].default_value = (0, 0, 0, 0)
+        mix_s.location = (150, y_off - 450)
+        links.new(s_str.outputs['Value'], mix_s.inputs[0])
+        links.new(node_in.outputs[col_name], mix_s.inputs[7])
+        spec_colors.append(mix_s.outputs[2])
+
+    # Accumulate cel factors
+    curr_cel = cel_factors[0]
+    for k in range(1, num_lights):
+        add_node = nodes.new('ShaderNodeMath')
+        add_node.operation = 'ADD'
+        add_node.use_clamp = True
+        add_node.location = (200 + (k - 1) * 160, 200)
+        links.new(curr_cel, add_node.inputs[0])
+        links.new(cel_factors[k], add_node.inputs[1])
+        curr_cel = add_node.outputs['Value']
+
+    # Accumulate lit colors
+    curr_lit = lit_colors[0]
+    for k in range(1, num_lights):
+        add_col = nodes.new('ShaderNodeMix')
+        add_col.data_type = 'RGBA'
+        add_col.blend_type = 'ADD'
+        add_col.inputs[0].default_value = 1.0
+        add_col.location = (200 + (k - 1) * 160, 0)
+        links.new(curr_lit, add_col.inputs[6])
+        links.new(lit_colors[k], add_col.inputs[7])
+        curr_lit = add_col.outputs[2]
+
+    # Multiply with Base Color
+    base_lit = nodes.new('ShaderNodeMix')
+    base_lit.data_type = 'RGBA'
+    base_lit.blend_type = 'MULTIPLY'
+    base_lit.inputs[0].default_value = 1.0
+    base_lit.location = (250 + num_lights * 160, 0)
+    links.new(node_in.outputs['Base Color'], base_lit.inputs[6])
+    links.new(curr_lit, base_lit.inputs[7])
+
+    # Mix cel with shadow
+    mix_cel = nodes.new('ShaderNodeMix')
+    mix_cel.data_type = 'RGBA'
+    mix_cel.location = (450 + num_lights * 160, 100)
+    links.new(curr_cel, mix_cel.inputs[0])
+    links.new(node_in.outputs['Shadow Color'], mix_cel.inputs[6])
+    links.new(base_lit.outputs[2], mix_cel.inputs[7])
+
+    # Accumulate specular
+    curr_spec = spec_colors[0]
+    for k in range(1, num_lights):
+        add_sp = nodes.new('ShaderNodeMix')
+        add_sp.data_type = 'RGBA'
+        add_sp.blend_type = 'ADD'
+        add_sp.inputs[0].default_value = 1.0
+        add_sp.location = (200 + (k - 1) * 160, -200)
+        links.new(curr_spec, add_sp.inputs[6])
+        links.new(spec_colors[k], add_sp.inputs[7])
+        curr_spec = add_sp.outputs[2]
+
+    # Add specular to surface
+    final_color = nodes.new('ShaderNodeMix')
+    final_color.data_type = 'RGBA'
+    final_color.blend_type = 'ADD'
+    final_color.inputs[0].default_value = 1.0
+    final_color.location = (650 + num_lights * 160, 100)
+    links.new(mix_cel.outputs[2], final_color.inputs[6])
+    links.new(curr_spec, final_color.inputs[7])
+
     emit = nodes.new('ShaderNodeEmission')
     emit.inputs['Strength'].default_value = 1.0
-    emit.location = (400, 150)
-    links.new(mix_spec.outputs[2], emit.inputs['Color'])
+    emit.location = (850 + num_lights * 160, 100)
+    links.new(final_color.outputs[2], emit.inputs['Color'])
     links.new(emit.outputs['Emission'], node_out.inputs['Shader'])
 
     return ng
 
 
-def _find_light_dir_node(mat):
-    """Find the LightDirection Normal node for this material."""
-    if not mat or not mat.node_tree:
-        return None
-    # 1. Per-material node in mat.node_tree (per-object independence)
-    node = mat.node_tree.nodes.get("LightDirection")
-    if node:
-        return node
-    # 2. Legacy fallback: inside group node
-    toon = find_anime_toon_node(mat)
-    if toon and toon.node_tree:
-        return toon.node_tree.nodes.get("LightDirection")
-    return None
+def get_or_create_toon_nodegroup():
+    """Backwards-compatible wrapper returning the 1-light Anime_Toon_Shader nodegroup."""
+    return get_or_create_multilight_toon_nodegroup(1)
 
 
-def setup_sphere_drivers(mat, ctrl_empty):
+def setup_single_light_drivers(normal_node, ctrl_empty):
     """
-    Wire 3 drivers on this material's LightDirection Normal node so it tracks
-    the Empty sphere's world-space Z-axis (matrix_world column 2).
-    Rotating the sphere instantly moves shadows across the model.
-    Each material maintains its own drivers independently.
+    Wire 3 drivers on normal_node so it tracks ctrl_empty's world-space Z-axis (matrix_world column 2).
     """
-    light_node = _find_light_dir_node(mat)
-    if not light_node:
+    if not normal_node or not ctrl_empty:
         return
-
-    normal_out = light_node.outputs['Normal']
-
-    # Remove old drivers on this specific node
+    normal_out = normal_node.outputs['Normal']
     for i in range(3):
         try:
             normal_out.driver_remove('default_value', i)
         except Exception:
             pass
-
-    # Add fresh drivers: read matrix_world[2][0], [2][1], [2][2]
     for axis_idx in range(3):
         fcurve = normal_out.driver_add('default_value', axis_idx)
         drv = fcurve.driver
@@ -253,10 +329,126 @@ def setup_sphere_drivers(mat, ctrl_empty):
         drv.expression = 'v'
 
 
-def create_anime_material(name="M_Anime_Toon"):
+def _find_light_dir_node(mat):
+    """Find the LightDirection Normal node for this material."""
+    if not mat or not mat.node_tree:
+        return None
+    node = mat.node_tree.nodes.get("LightDirection")
+    if node:
+        return node
+    toon = find_anime_toon_node(mat)
+    if toon and toon.node_tree:
+        return toon.node_tree.nodes.get("LightDirection")
+    return None
+
+
+def setup_sphere_drivers(mat, ctrl_empty):
+    """Legacy helper wiring LightDirection node for single-light setup."""
+    light_node = _find_light_dir_node(mat)
+    if light_node:
+        setup_single_light_drivers(light_node, ctrl_empty)
+
+
+def sync_material_lights(mesh_obj):
     """
-    Creates a material with the Anime_Toon_Shader node group
-    and a per-material LightDirection Normal node for independent light tracking.
+    Synchronizes all anime materials on mesh_obj with its collection of anime_lights.
+    Updates the nodegroup size, Normal nodes, drivers, and property values.
+    """
+    if not mesh_obj or not hasattr(mesh_obj, "anime_lights") or not mesh_obj.data:
+        return
+
+    num_lights = max(1, len(mesh_obj.anime_lights))
+    ng = get_or_create_multilight_toon_nodegroup(num_lights)
+
+    for mat in mesh_obj.data.materials:
+        if not mat or not mat.node_tree:
+            continue
+        name_low = mat.name.lower()
+        if "outline" in name_low or "stray" in name_low or "gizmo" in name_low or "pointer" in name_low:
+            continue
+
+        toon_node = find_anime_toon_node(mat)
+        if not toon_node:
+            toon_node = mat.node_tree.nodes.new('ShaderNodeGroup')
+            toon_node.location = (0, 0)
+        toon_node.node_tree = ng
+
+        # Wire Output Surface
+        out_node = None
+        for n in mat.node_tree.nodes:
+            if n.type == 'OUTPUT_MATERIAL':
+                out_node = n
+                break
+        if not out_node:
+            out_node = mat.node_tree.nodes.new('ShaderNodeOutputMaterial')
+            out_node.location = (450 + num_lights * 160, 0)
+        mat.node_tree.links.new(toon_node.outputs['Shader'], out_node.inputs['Surface'])
+
+        # Ensure Base Color and Shadow Color have valid default colors
+        if 'Base Color' in toon_node.inputs:
+            bc = toon_node.inputs['Base Color'].default_value
+            if bc[0] == 0.0 and bc[1] == 0.0 and bc[2] == 0.0:
+                toon_node.inputs['Base Color'].default_value = (0.92, 0.78, 0.68, 1.0)
+        if 'Shadow Color' in toon_node.inputs:
+            sc = toon_node.inputs['Shadow Color'].default_value
+            if sc[0] == 0.0 and sc[1] == 0.0 and sc[2] == 0.0:
+                toon_node.inputs['Shadow Color'].default_value = (0.55, 0.42, 0.52, 1.0)
+
+        # Process each light
+        for idx in range(num_lights):
+            i = idx + 1
+            light_item = mesh_obj.anime_lights[idx] if idx < len(mesh_obj.anime_lights) else None
+
+            node_name = "LightDirection" if i == 1 else f"LightDirection_{i}"
+            normal_node = mat.node_tree.nodes.get(node_name)
+            if not normal_node:
+                normal_node = mat.node_tree.nodes.new('ShaderNodeNormal')
+                normal_node.name = node_name
+                normal_node.label = f"Light {i} Direction"
+                normal_node.location = (-260, -50 - (i - 1) * 180)
+
+            dir_socket_name = _get_light_socket_name(idx, 'direction')
+            if dir_socket_name in toon_node.inputs:
+                mat.node_tree.links.new(normal_node.outputs['Normal'], toon_node.inputs[dir_socket_name])
+
+            if light_item and light_item.ctrl_obj:
+                setup_single_light_drivers(normal_node, light_item.ctrl_obj)
+
+            if light_item:
+                col_socket = _get_light_socket_name(idx, 'color')
+                str_socket = _get_light_socket_name(idx, 'strength')
+                pos_socket = _get_light_socket_name(idx, 'position')
+                sft_socket = _get_light_socket_name(idx, 'softness')
+                spc_socket = _get_light_socket_name(idx, 'specular')
+                en_socket = _get_light_socket_name(idx, 'enabled')
+
+                if col_socket in toon_node.inputs:
+                    toon_node.inputs[col_socket].default_value = light_item.light_color
+                if str_socket in toon_node.inputs:
+                    toon_node.inputs[str_socket].default_value = light_item.strength
+                if pos_socket in toon_node.inputs:
+                    toon_node.inputs[pos_socket].default_value = light_item.shadow_position
+                if sft_socket in toon_node.inputs:
+                    toon_node.inputs[sft_socket].default_value = light_item.shadow_softness
+                if spc_socket in toon_node.inputs:
+                    toon_node.inputs[spc_socket].default_value = light_item.specular_size
+                if en_socket in toon_node.inputs:
+                    toon_node.inputs[en_socket].default_value = 1.0 if light_item.enabled else 0.0
+
+        # Clean up obsolete LightDirection nodes if lights count decreased
+        for n in list(mat.node_tree.nodes):
+            if n.name.startswith("LightDirection_"):
+                try:
+                    num = int(n.name.split("_")[1])
+                    if num > num_lights:
+                        mat.node_tree.nodes.remove(n)
+                except Exception:
+                    pass
+
+
+def create_anime_material(name="M_Anime_Toon", num_lights=1):
+    """
+    Creates an anime material with the multi-light Anime_Toon_Shader node group.
     """
     mat = bpy.data.materials.new(name=name)
     nodes = mat.node_tree.nodes
@@ -267,19 +459,24 @@ def create_anime_material(name="M_Anime_Toon"):
     out_node.location = (400, 0)
 
     group_node = nodes.new('ShaderNodeGroup')
-    group_node.node_tree = get_or_create_toon_nodegroup()
+    group_node.node_tree = get_or_create_multilight_toon_nodegroup(num_lights)
     group_node.location = (0, 0)
 
-    # Local LightDirection Normal node specific to this material
+    if 'Base Color' in group_node.inputs:
+        group_node.inputs['Base Color'].default_value = (0.92, 0.78, 0.68, 1.0)
+    if 'Shadow Color' in group_node.inputs:
+        group_node.inputs['Shadow Color'].default_value = (0.55, 0.42, 0.52, 1.0)
+
+    # Local LightDirection Normal node for Light 1
     light_node = nodes.new('ShaderNodeNormal')
     light_node.name = "LightDirection"
-    light_node.label = "Light Direction (Sphere)"
+    light_node.label = "Light 1 Direction"
     light_node.location = (-260, -50)
     light_node.outputs['Normal'].default_value = (0.0, 0.0, 1.0)
 
-    # Connect to group node's Light Direction input
-    if "Light Direction" in group_node.inputs:
-        links.new(light_node.outputs['Normal'], group_node.inputs['Light Direction'])
+    dir_socket = _get_light_socket_name(0, 'direction')
+    if dir_socket in group_node.inputs:
+        links.new(light_node.outputs['Normal'], group_node.inputs[dir_socket])
 
     links.new(group_node.outputs['Shader'], out_node.inputs['Surface'])
     return mat
@@ -301,107 +498,9 @@ def heal_anime_materials(ng=None):
     or is missing the per-material LightDirection node is automatically repaired.
     Restores full color, shader connections, and drivers.
     """
-    if ng is None:
-        ng = get_or_create_toon_nodegroup()
-
-    for m in bpy.data.materials:
-        if not m or not m.node_tree:
-            continue
-
-        # Skip and repair any outline or gizmo materials (never add toon node group to them!)
-        name_low = m.name.lower()
-        if "gizmo" in name_low or "pointer" in name_low:
-            continue
-        is_outline = (
-            "outline" in name_low
-            or "stray" in name_low
-            or any(n.name in {"OutlineEmission", "StrayEmission"} for n in m.node_tree.nodes)
-        )
-        if is_outline:
-            # Auto-repair outline material if toon group was accidentally attached
-            out_node = None
-            mix_shader = None
-            rogue_nodes = []
-            for n in m.node_tree.nodes:
-                if n.type == 'OUTPUT_MATERIAL':
-                    out_node = n
-                elif n.type == 'MIX_SHADER':
-                    mix_shader = n
-                elif n.type == 'GROUP' and n.node_tree and n.node_tree.name.startswith(NODE_GROUP_NAME):
-                    rogue_nodes.append(n)
-                elif n.name == "LightDirection":
-                    rogue_nodes.append(n)
-
-            if out_node and mix_shader:
-                cur_link = out_node.inputs['Surface'].links
-                if cur_link and cur_link[0].from_node != mix_shader:
-                    m.node_tree.links.new(mix_shader.outputs['Shader'], out_node.inputs['Surface'])
-            for rn in rogue_nodes:
-                m.node_tree.nodes.remove(rn)
-            continue
-
-        # Check if this is an anime toon material
-        is_anime = m.name.startswith("M_Anime_") and not is_outline
-        group_node = None
-        for n in m.node_tree.nodes:
-            if n.type == 'GROUP' and (n.node_tree is None or n.node_tree.name.startswith(NODE_GROUP_NAME)):
-                group_node = n
-                is_anime = True
-                break
-
-        if not is_anime:
-            continue
-
-        # 1. Ensure group node has ng assigned
-        if not group_node:
-            group_node = m.node_tree.nodes.new('ShaderNodeGroup')
-            group_node.name = "Group"
-            group_node.location = (0, 0)
-        group_node.node_tree = ng
-
-        # 2. Ensure Material Output exists and is connected
-        out_node = None
-        for n in m.node_tree.nodes:
-            if n.type == 'OUTPUT_MATERIAL':
-                out_node = n
-                break
-        if not out_node:
-            out_node = m.node_tree.nodes.new('ShaderNodeOutputMaterial')
-            out_node.location = (400, 0)
-
-        # Link group -> output if not linked
-        has_out_link = any(
-            l.to_node == out_node and l.from_node == group_node
-            for l in m.node_tree.links
-        )
-        if not has_out_link:
-            m.node_tree.links.new(group_node.outputs['Shader'], out_node.inputs['Surface'])
-
-        # 3. Ensure LightDirection Normal node exists
-        ld = m.node_tree.nodes.get("LightDirection")
-        if not ld:
-            ld = m.node_tree.nodes.new('ShaderNodeNormal')
-            ld.name = "LightDirection"
-            ld.label = "Light Direction (Sphere)"
-            ld.location = (-260, -50)
-            ld.outputs['Normal'].default_value = (0.0, 0.0, 1.0)
-
-        # Link LightDirection -> group_node input
-        if "Light Direction" in group_node.inputs:
-            has_ld_link = any(
-                l.to_socket == group_node.inputs['Light Direction']
-                for l in m.node_tree.links
-            )
-            if not has_ld_link:
-                m.node_tree.links.new(ld.outputs['Normal'], group_node.inputs['Light Direction'])
-
-        # 4. Restore Light drivers if bound to a controller
-        for obj in bpy.data.objects:
-            if obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'} and m.name in obj.data.materials:
-                ctrl = obj.get(CTRL_PROP)
-                if ctrl and isinstance(ctrl, bpy.types.Object) and ctrl.name in bpy.data.objects:
-                    setup_sphere_drivers(m, ctrl)
-                break
+    for obj in bpy.data.objects:
+        if obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'} and hasattr(obj, "anime_lights") and obj.anime_lights:
+            sync_material_lights(obj)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
