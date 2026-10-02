@@ -67,10 +67,15 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     T_point = Matrix.Translation(Vector((0, 0, R)))
     bmesh.ops.create_icosphere(bm, subdivisions=2, radius=r_point, matrix=T_point)
 
-    # 2. Vector line/shaft towards center (0, 0, 0)
-    shaft_len = max(0.1, (R - r_point) - (R * 0.35))
-    z_mid = (R * 0.35) + shaft_len / 2.0
-    T_shaft = Matrix.Translation(Vector((0, 0, z_mid)))
+    # 2. Compact directional vector arrow pointing inward towards center
+    z_start = R - r_point * 0.5
+    arrow_len = max(0.15, R * 0.30)
+    shaft_len = arrow_len * 0.55
+    cone_len = arrow_len * 0.45
+
+    # Shaft
+    z_shaft_mid = z_start - shaft_len / 2.0
+    T_shaft = Matrix.Translation(Vector((0, 0, z_shaft_mid)))
     bmesh.ops.create_cone(
         bm,
         cap_ends=True,
@@ -83,9 +88,8 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     )
 
     # 3. Arrowhead cone pointing towards center
-    cone_len = max(0.1, R * 0.28)
-    z_cone = (0.05 * R) + cone_len / 2.0
-    T_cone = Matrix.Translation(Vector((0, 0, z_cone)))
+    z_cone_mid = (z_start - shaft_len) - cone_len / 2.0
+    T_cone = Matrix.Translation(Vector((0, 0, z_cone_mid)))
     bmesh.ops.create_cone(
         bm,
         cap_ends=True,
