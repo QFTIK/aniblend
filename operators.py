@@ -837,8 +837,13 @@ class ANIME_OT_add_outline(bpy.types.Operator):
         mod.show_viewport = True
         mod.show_render = True
 
-        # 4. Sync secondary Stray Outline (hand-drawn sketch extra strokes)
-        sync_stray_outline(mesh)
+        # 4. Clean up or sync secondary Stray Outline (disabled by default to prevent modifier conflict)
+        if getattr(mesh, 'anime_stray_enable', False):
+            sync_stray_outline(mesh)
+        else:
+            stray_mod = mesh.modifiers.get(OUTLINE_STRAY_MOD_NAME)
+            if stray_mod:
+                mesh.modifiers.remove(stray_mod)
 
         # Switch viewport to Material Preview so backface culling is active immediately
         for area in context.screen.areas:
@@ -863,12 +868,11 @@ def sync_stray_outline(mesh, scene=None):
         return
 
     stray_mod = mesh.modifiers.get(OUTLINE_STRAY_MOD_NAME)
-    enabled = getattr(mesh, 'anime_stray_enable', True) if hasattr(mesh, 'anime_stray_enable') else (getattr(scene, 'anime_stray_enable', True) if scene else True)
+    enabled = getattr(mesh, 'anime_stray_enable', False) if hasattr(mesh, 'anime_stray_enable') else (getattr(scene, 'anime_stray_enable', False) if scene else False)
 
     if not enabled:
         if stray_mod:
-            stray_mod.show_viewport = False
-            stray_mod.show_render = False
+            mesh.modifiers.remove(stray_mod)
         return
 
     # Check existing material slots first to avoid creating duplicate stray materials
@@ -968,6 +972,13 @@ class ANIME_OT_remove_outline(bpy.types.Operator):
         stray_mod = mesh.modifiers.get(OUTLINE_STRAY_MOD_NAME)
         if stray_mod:
             mesh.modifiers.remove(stray_mod)
+        # Clean up outline materials from slots
+        to_remove = []
+        for i, m in enumerate(mesh.data.materials):
+            if m and ("Anime_Outline" in m.name or "Anime_Stray" in m.name):
+                to_remove.append(i)
+        for i in reversed(to_remove):
+            mesh.data.materials.pop(index=i)
         self.report({'INFO'}, f"Outlines removed from '{mesh.name}'")
         return {'FINISHED'}
 
