@@ -768,23 +768,23 @@ def get_or_create_outline_material(mesh=None):
 
     # 9. Shaders: Transparent BSDF & Emission
     transp = nodes.new('ShaderNodeBsdfTransparent')
-    transp.location = (1000, 200)
+    transp.location = (1180, 200)
 
     emit = nodes.new('ShaderNodeEmission')
     emit.name = "OutlineEmission"
     emit.label = "Outline Color"
     emit.inputs['Color'].default_value = (0.0, 0.0, 0.0, 1.0)
     emit.inputs['Strength'].default_value = 1.0
-    emit.location = (1000, -150)
+    emit.location = (1180, -150)
 
     mix_s = nodes.new('ShaderNodeMixShader')
-    mix_s.location = (1200, 100)
+    mix_s.location = (1380, 100)
     links.new(final_alpha.outputs['Value'], mix_s.inputs['Fac'])
     links.new(transp.outputs['BSDF'], mix_s.inputs[1])
     links.new(emit.outputs['Emission'], mix_s.inputs[2])
 
     out = nodes.new('ShaderNodeOutputMaterial')
-    out.location = (1400, 100)
+    out.location = (1580, 100)
     links.new(mix_s.outputs['Shader'], out.inputs['Surface'])
 
     return mat
@@ -969,7 +969,7 @@ def get_or_create_stray_outline_material(mesh=None):
     links.new(emit.outputs['Emission'], mix_s.inputs[2])
 
     out = nodes.new('ShaderNodeOutputMaterial')
-    out.location = (500, 0)
+    out.location = (650, 0)
     links.new(mix_s.outputs['Shader'], out.inputs['Surface'])
 
     return mat

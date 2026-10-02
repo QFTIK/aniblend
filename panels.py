@@ -602,7 +602,7 @@ def register():
         target.anime_stray_enable = bpy.props.BoolProperty(
             name="Stray Strokes",
             description="Enable hasty hand-drawn secondary stray strokes near the outline",
-            default=True,
+            default=False,
             update=_update_stray,
         )
 
