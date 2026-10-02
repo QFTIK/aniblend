@@ -506,6 +506,14 @@ def sync_material_lights(mesh_obj):
                     toon_node.inputs[opc_socket].default_value = light_item.opacity
                 if cov_socket in toon_node.inputs and hasattr(light_item, "blend_mode"):
                     toon_node.inputs[cov_socket].default_value = 1.0 if light_item.blend_mode == 'COVER' else 0.0
+            else:
+                # No light source item (0 lights active, unlit flat shading)
+                en_socket = _get_light_socket_name(idx, 'enabled')
+                str_socket = _get_light_socket_name(idx, 'strength')
+                if en_socket in toon_node.inputs:
+                    toon_node.inputs[en_socket].default_value = 0.0
+                if str_socket in toon_node.inputs:
+                    toon_node.inputs[str_socket].default_value = 0.0
 
         # Clean up obsolete LightDirection nodes if lights count decreased
         for n in list(mat.node_tree.nodes):

@@ -313,9 +313,8 @@ class ANIME_UL_lights_list(bpy.types.UIList):
             )
             op_vis.index = index
 
-            # Delete (only if > 1 light)
+            # Delete
             del_row = row.row(align=True)
-            del_row.enabled = len(data.anime_lights) > 1
             op_del = del_row.operator("anime.light_remove", text="", icon='X', emboss=False)
             op_del.index = index
 
@@ -345,7 +344,9 @@ class ANIME_PT_light_sources(bpy.types.Panel):
             return
 
         if not mesh.anime_lights:
-            layout.label(text="Re-apply shader to initialize lights.", icon='INFO')
+            box = layout.box()
+            box.label(text="No lights active (Flat / Unlit)", icon='LIGHT')
+            box.operator("anime.light_add", text="Add Light", icon='ADD')
             return
 
         # ── Light list with +/- and ▲/▼ layer buttons ──
@@ -360,7 +361,7 @@ class ANIME_PT_light_sources(bpy.types.Panel):
         col_side = row.column(align=True)
         col_side.operator("anime.light_add", text="", icon='ADD')
         del_col = col_side.column(align=True)
-        del_col.enabled = len(mesh.anime_lights) > 1
+        del_col.enabled = len(mesh.anime_lights) > 0
         del_col.operator("anime.light_remove", text="", icon='REMOVE')
 
         col_side.separator(factor=0.5)
