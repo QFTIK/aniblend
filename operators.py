@@ -170,21 +170,22 @@ def _get_or_create_pointer_material(color=(0.2, 1.0, 0.4, 1.0), suffix=""):
 
 def _update_pointer_color(ctrl, color):
     """Updates the display and emission color of the pointer object and controller attached to ctrl."""
-    if not ctrl or ctrl.name not in bpy.data.objects:
-        return
-    ctrl.color = color
-    pointer_name = f"{ctrl.name}_Pointer"
-    pointer_obj = bpy.data.objects.get(pointer_name)
-    if pointer_obj:
-        pointer_obj.color = color
-        if pointer_obj.data and pointer_obj.data.materials:
-            mat = pointer_obj.data.materials[0]
-            if mat:
-                mat.diffuse_color = color
-                if mat.node_tree:
+    try:
+        if not ctrl or not hasattr(ctrl, "name") or ctrl.name not in bpy.data.objects:
+            return
+        ctrl.color = color
+        pointer_name = f"{ctrl.name}_Pointer"
+        pointer_obj = bpy.data.objects.get(pointer_name)
+        if pointer_obj:
+            pointer_obj.color = color
+            if pointer_obj.data and pointer_obj.data.materials:
+                mat = pointer_obj.data.materials[0]
+                if mat and mat.node_tree:
                     for node in mat.node_tree.nodes:
                         if node.type == 'EMISSION' and 'Color' in node.inputs:
                             node.inputs['Color'].default_value = color
+    except Exception:
+        pass
 
 
 def _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=(0.2, 1.0, 0.4, 1.0), suffix=""):
@@ -260,21 +261,35 @@ def _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=(0.2, 1.0, 0.4, 
 
 def _create_or_ensure_light_ctrl(context, mesh_obj, light_item, index=0):
     """Creates or updates a sphere controller Empty + Pointer for light_item."""
-    ctrl_name = f"{mesh_obj.name}_LightCtrl_{index+1}" if index > 0 else f"{mesh_obj.name}_LightCtrl"
     ctrl = light_item.ctrl_obj
-    if not ctrl or ctrl.name not in bpy.data.objects:
-        ctrl = bpy.data.objects.get(ctrl_name)
-    if not ctrl:
-        bpy.ops.object.empty_add(type='SPHERE', location=mesh_obj.location)
-        ctrl = context.active_object
-        ctrl.name = ctrl_name
-        dim = max(mesh_obj.dimensions) if mesh_obj.dimensions else 2.0
-        ctrl.empty_display_size = max(dim * 0.8, 1.0)
-        ctrl.show_in_front = True
-        ctrl.hide_render = True
-        if index > 0:
-            # Offset initial rotation so lights don't face identical directions
-            ctrl.rotation_euler = (0.4, 0.0, 1.2 * index)
+    if not (ctrl and hasattr(ctrl, "name") and ctrl.name in bpy.data.objects):
+        base_name = f"{mesh_obj.name}_LightCtrl"
+        candidate_name = base_name if index == 0 else f"{base_name}_{index+1}"
+        counter = index + 1
+        ctrl = None
+        while candidate_name in bpy.data.objects:
+            # Check if this existing object is already assigned to ANY OTHER light on this mesh
+            is_used = any(
+                l.ctrl_obj and hasattr(l.ctrl_obj, "name") and l.ctrl_obj.name == candidate_name
+                for l in mesh_obj.anime_lights if l != light_item
+            )
+            if not is_used:
+                ctrl = bpy.data.objects[candidate_name]
+                break
+            counter += 1
+            candidate_name = f"{base_name}_{counter}"
+
+        if not ctrl:
+            bpy.ops.object.empty_add(type='SPHERE', location=mesh_obj.location)
+            ctrl = context.active_object
+            ctrl.name = candidate_name
+            dim = max(mesh_obj.dimensions) if mesh_obj.dimensions else 2.0
+            ctrl.empty_display_size = max(dim * 0.8, 1.0)
+            ctrl.show_in_front = True
+            ctrl.hide_render = True
+            if index > 0:
+                # Offset initial rotation so lights don't face identical directions
+                ctrl.rotation_euler = (0.4, 0.0, 1.2 * index)
 
     ctrl.hide_render = True
     ctrl.color = light_item.marker_color
@@ -541,12 +556,11 @@ class ANIME_OT_light_remove(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         mesh = _resolve_mesh(context)
-        return mesh is not None and len(mesh.anime_lights) > 1
+        return mesh is not None and len(mesh.anime_lights) > 0
 
     def execute(self, context):
         mesh = _resolve_mesh(context)
-        if not mesh or len(mesh.anime_lights) <= 1:
-            self.report({'WARNING'}, "Cannot remove the only light source.")
+        if not mesh or len(mesh.anime_lights) == 0:
             return {'CANCELLED'}
 
         idx = self.index if 0 <= self.index < len(mesh.anime_lights) else mesh.anime_active_light_index
@@ -555,7 +569,7 @@ class ANIME_OT_light_remove(bpy.types.Operator):
 
         item = mesh.anime_lights[idx]
         ctrl = item.ctrl_obj
-        if ctrl and ctrl.name in bpy.data.objects:
+        if ctrl and hasattr(ctrl, "name") and ctrl.name in bpy.data.objects:
             pointer = bpy.data.objects.get(f"{ctrl.name}_Pointer")
             if pointer:
                 bpy.data.objects.remove(pointer, do_unlink=True)
@@ -570,14 +584,25 @@ class ANIME_OT_light_remove(bpy.types.Operator):
         # Update primary CTRL_PROP reference on mesh
         if mesh.anime_lights and mesh.anime_lights[0].ctrl_obj:
             mesh[CTRL_PROP] = mesh.anime_lights[0].ctrl_obj
+        elif CTRL_PROP in mesh:
+            try:
+                del mesh[CTRL_PROP]
+            except Exception:
+                pass
 
         # Keep mesh as the active selected object in viewport so user never loses focus!
         if mesh and mesh.name in bpy.data.objects:
             for o in list(context.selected_objects):
                 if o != mesh:
-                    o.select_set(False)
-            mesh.select_set(True)
-            context.view_layer.objects.active = mesh
+                    try:
+                        o.select_set(False)
+                    except Exception:
+                        pass
+            try:
+                mesh.select_set(True)
+                context.view_layer.objects.active = mesh
+            except Exception:
+                pass
 
         if context.area:
             context.area.tag_redraw()
@@ -706,13 +731,24 @@ class ANIME_OT_light_select(bpy.types.Operator):
         if 0 <= idx < len(mesh.anime_lights):
             mesh.anime_active_light_index = idx
             ctrl = mesh.anime_lights[idx].ctrl_obj
-            if ctrl and ctrl.name in bpy.data.objects:
+            if not (ctrl and hasattr(ctrl, "name") and ctrl.name in bpy.data.objects):
+                ctrl = _create_or_ensure_light_ctrl(context, mesh, mesh.anime_lights[idx], index=idx)
+                sync_material_lights(mesh)
+
+            if ctrl and hasattr(ctrl, "name") and ctrl.name in bpy.data.objects:
                 for o in list(context.selected_objects):
-                    o.select_set(False)
-                ctrl.select_set(True)
-                context.view_layer.objects.active = ctrl
-                self.report({'INFO'}, f"Selected controller '{ctrl.name}'")
-                return {'FINISHED'}
+                    try:
+                        o.select_set(False)
+                    except Exception:
+                        pass
+                try:
+                    if ctrl.name in context.view_layer.objects:
+                        ctrl.select_set(True)
+                        context.view_layer.objects.active = ctrl
+                        self.report({'INFO'}, f"Selected controller '{ctrl.name}'")
+                        return {'FINISHED'}
+                except Exception:
+                    pass
         return {'CANCELLED'}
 
 
@@ -1024,35 +1060,46 @@ classes = (
 )
 
 
-_cleanup_in_progress = False
+_cleanup_timer_scheduled = False
+
+def _do_deferred_cleanup():
+    global _cleanup_timer_scheduled
+    _cleanup_timer_scheduled = False
+    try:
+        to_delete = []
+        for obj in list(bpy.data.objects):
+            if "anime_bound_mesh" in obj:
+                try:
+                    bound = obj.get("anime_bound_mesh")
+                    if not bound or not hasattr(bound, "name") or bound.name not in bpy.data.objects:
+                        to_delete.append(obj)
+                except Exception:
+                    to_delete.append(obj)
+
+        for obj in to_delete:
+            if obj and hasattr(obj, "name") and obj.name in bpy.data.objects:
+                try:
+                    bpy.data.objects.remove(obj, do_unlink=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return None  # Do not repeat timer
 
 @bpy.app.handlers.persistent
 def _cleanup_orphaned_anime_controllers(scene, depsgraph=None):
     """
-    Automatically cleans up sphere controllers and pointers when their
-    bound mesh object is deleted from the scene.
+    Safely schedules cleanup of sphere controllers and pointers via a timer
+    so it does not modify bpy.data during depsgraph evaluation.
     """
-    global _cleanup_in_progress
-    if _cleanup_in_progress:
+    global _cleanup_timer_scheduled
+    if _cleanup_timer_scheduled:
         return
-
-    to_delete = []
-    for obj in bpy.data.objects:
-        if "anime_bound_mesh" in obj:
-            bound = obj.get("anime_bound_mesh")
-            if not bound or (hasattr(bound, "name") and bound.name not in bpy.data.objects):
-                to_delete.append(obj)
-
-    if to_delete:
-        _cleanup_in_progress = True
-        try:
-            for obj in to_delete:
-                if obj.name in bpy.data.objects:
-                    bpy.data.objects.remove(obj, do_unlink=True)
-        except Exception:
-            pass
-        finally:
-            _cleanup_in_progress = False
+    _cleanup_timer_scheduled = True
+    try:
+        bpy.app.timers.register(_do_deferred_cleanup, first_interval=0.05)
+    except Exception:
+        _cleanup_timer_scheduled = False
 
 
 def register():
