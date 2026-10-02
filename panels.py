@@ -1,6 +1,6 @@
 """
 Tabbed UI Panel for AniBlend (Light & Outline tabs).
-Features Hand-Drawn Chaos, Opacity, Styles (Solid, Ink/Pen, Dashed, Sketch), Density, and Color.
+Clean, intuitive layout with logical grouping.
 """
 
 import bpy
@@ -14,8 +14,6 @@ from .shader_builder import (
     set_stray_color,
 )
 from .operators import sync_stray_outline
-
-
 
 
 def _get_mesh_and_node(context):
@@ -58,99 +56,81 @@ def _tag_viewport_redraw(context):
 
 def _find_active_outline_mat(mesh):
     """Finds the actual outline material in the mesh slots or modifier."""
-    if not mesh:
-        return None
-    mod = mesh.modifiers.get(OUTLINE_MOD_NAME)
-    if mod and 0 <= mod.material_offset < len(mesh.data.materials):
-        mat = mesh.data.materials[mod.material_offset]
-        if mat and mat.node_tree:
-            return mat
-    for m in mesh.data.materials:
-        if m and m.node_tree and find_outline_emission_node(m):
-            return m
-    return get_or_create_outline_material(mesh)
+    per_mesh = bpy.data.materials.get(f"M_Anime_Outline_{mesh.name}")
+    if per_mesh and per_mesh.node_tree:
+        return per_mesh
+    return bpy.data.materials.get(OUTLINE_MAT_NAME)
 
 
 def _find_active_stray_mat(mesh):
-    """Finds the actual stray outline material in the mesh slots or modifier."""
-    if not mesh:
-        return None
-    stray_mod = mesh.modifiers.get(OUTLINE_STRAY_MOD_NAME)
-    if stray_mod and 0 <= stray_mod.material_offset < len(mesh.data.materials):
-        mat = mesh.data.materials[stray_mod.material_offset]
-        if mat and mat.node_tree:
-            return mat
-    for m in mesh.data.materials:
-        if m and m.node_tree and ("stray" in m.name.lower() or m.node_tree.nodes.get("StrayEmission")):
-            return m
-    return get_or_create_stray_outline_material(mesh)
+    per_mesh = bpy.data.materials.get(f"M_Anime_Stray_Outline_{mesh.name}")
+    if per_mesh and per_mesh.node_tree:
+        return per_mesh
+    return bpy.data.materials.get(OUTLINE_STRAY_MAT_NAME)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UPDATE CALLBACKS
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _update_thickness(self, context):
-    """Safely apply positive thickness to this mesh's Solidify modifier."""
-    mesh = _resolve_target_mesh(self, context)
-    if mesh and mesh.type == 'MESH':
-        val = getattr(mesh, 'anime_outline_thickness', getattr(self, 'anime_outline_thickness', 0.02))
-        mod = mesh.modifiers.get(OUTLINE_MOD_NAME)
-        if mod:
-            mod.thickness = max(0.001, val)
-        sync_stray_outline(mesh)
-        _tag_viewport_redraw(context)
-
-
-def _update_chaos(self, context):
-    """Update organic hand-drawn jitter & stroke chaos in this mesh's outline material."""
     mesh = _resolve_target_mesh(self, context)
     if mesh:
-        val = getattr(mesh, 'anime_outline_chaos', getattr(self, 'anime_outline_chaos', 0.25))
-        outline_mat = _find_active_outline_mat(mesh)
-        if outline_mat:
-            set_outline_chaos(outline_mat, val)
-            outline_mat.update_tag()
+        mod = mesh.modifiers.get(OUTLINE_MOD_NAME)
+        if mod:
+            mod.thickness = self.anime_outline_thickness
+        stray_mod = mesh.modifiers.get(OUTLINE_STRAY_MOD_NAME)
+        if stray_mod:
+            stray_mod.thickness = max(0.002, self.anime_outline_thickness * 0.65)
+            stray_mod.offset = self.anime_stray_offset / self.anime_outline_thickness if self.anime_outline_thickness > 0 else 1.0
         _tag_viewport_redraw(context)
 
 
 def _update_opacity(self, context):
-    """Update outline opacity/alpha in this mesh's outline material."""
     mesh = _resolve_target_mesh(self, context)
     if mesh:
-        val = getattr(mesh, 'anime_outline_opacity', getattr(self, 'anime_outline_opacity', 1.0))
         outline_mat = _find_active_outline_mat(mesh)
         if outline_mat:
-            set_outline_opacity(outline_mat, val)
+            set_outline_opacity(outline_mat, self.anime_outline_opacity)
+            outline_mat.update_tag()
+        _tag_viewport_redraw(context)
+
+
+def _update_chaos(self, context):
+    mesh = _resolve_target_mesh(self, context)
+    if mesh:
+        outline_mat = _find_active_outline_mat(mesh)
+        if outline_mat:
+            set_outline_chaos(outline_mat, self.anime_outline_chaos)
             outline_mat.update_tag()
         _tag_viewport_redraw(context)
 
 
 def _update_style(self, context):
-    """Switch outline pattern between Solid, Ink/Pen, Dashed, and Sketch for this mesh."""
     mesh = _resolve_target_mesh(self, context)
     if mesh:
-        val = getattr(mesh, 'anime_outline_style', getattr(self, 'anime_outline_style', 'SOLID'))
         outline_mat = _find_active_outline_mat(mesh)
         if outline_mat:
-            set_outline_style(outline_mat, val)
+            set_outline_style(outline_mat, self.anime_outline_style)
+            set_outline_scale(outline_mat, self.anime_outline_scale)
             outline_mat.update_tag()
         _tag_viewport_redraw(context)
 
 
 def _update_scale(self, context):
-    """Update stroke density / frequency for this mesh."""
     mesh = _resolve_target_mesh(self, context)
     if mesh:
-        val = getattr(mesh, 'anime_outline_scale', getattr(self, 'anime_outline_scale', 20.0))
         outline_mat = _find_active_outline_mat(mesh)
         if outline_mat:
-            set_outline_scale(outline_mat, val)
+            set_outline_scale(outline_mat, self.anime_outline_scale)
             outline_mat.update_tag()
         _tag_viewport_redraw(context)
 
 
 def _update_color(self, context):
-    """Update ink emission color in this mesh's outline materials."""
     mesh = _resolve_target_mesh(self, context)
     if mesh:
-        val = getattr(mesh, 'anime_outline_color', getattr(self, 'anime_outline_color', (0.0, 0.0, 0.0, 1.0)))
+        val = self.anime_outline_color
         outline_mat = _find_active_outline_mat(mesh)
         if outline_mat:
             emit = find_outline_emission_node(outline_mat)
@@ -180,6 +160,10 @@ def _update_tab(self, context):
     _tag_viewport_redraw(context)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN PANEL
+# ─────────────────────────────────────────────────────────────────────────────
+
 class ANIME_PT_main_panel(bpy.types.Panel):
     bl_label = "AniBlend"
     bl_idname = "ANIME_PT_main_panel"
@@ -190,64 +174,117 @@ class ANIME_PT_main_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         scene = context.scene
-
         mesh, node = _get_mesh_and_node(context)
 
-        # Tab filter row: All / Light / Outline
+        # Tab selector
         row = layout.row(align=True)
+        row.scale_y = 1.15
         row.prop(scene, "anime_active_tab", expand=True)
 
         if not mesh:
             layout.separator()
             box = layout.box()
-            box.label(text="Select a 3D Mesh to begin", icon='INFO')
+            box.label(text="Select a 3D mesh to begin", icon='INFO')
             return
 
         active_tab = scene.anime_active_tab
 
-        # Quick Actions Header
-        col = layout.column(align=True)
-        col.scale_y = 1.25
-
+        # Apply / status button
         if active_tab == 'LIGHT':
             if not node:
-                col.operator("anime.apply_shader", text="Apply Anime Shader", icon='SHADING_RENDERED')
+                op_row = layout.row(align=True)
+                op_row.scale_y = 1.35
+                op_row.operator("anime.apply_shader", text="Apply Anime Shader", icon='SHADING_RENDERED')
             else:
-                col.operator("anime.apply_shader", text="Reset / Re-apply Shader", icon='FILE_REFRESH')
+                row_st = layout.row(align=True)
+                row_st.scale_y = 1.1
+                row_st.operator("anime.apply_shader", text="Re-apply Shader", icon='FILE_REFRESH')
 
         elif active_tab == 'OUTLINE':
             mod = mesh.modifiers.get(OUTLINE_MOD_NAME)
             if not mod:
-                col.operator("anime.add_outline", text="Add Outlines", icon='LINE_DATA')
+                op_row = layout.row(align=True)
+                op_row.scale_y = 1.35
+                op_row.operator("anime.add_outline", text="Add Outlines", icon='LINE_DATA')
             else:
-                row_out = col.row(align=True)
+                row_out = layout.row(align=True)
+                row_out.scale_y = 1.1
                 if mod.show_viewport:
-                    row_out.operator("anime.toggle_outline", text="Outlines: Visible", icon='HIDE_OFF')
+                    row_out.operator("anime.toggle_outline", text="Outlines: ON", icon='HIDE_OFF')
                 else:
-                    row_out.operator("anime.toggle_outline", text="Outlines: Hidden", icon='HIDE_ON')
+                    row_out.operator("anime.toggle_outline", text="Outlines: OFF", icon='HIDE_ON')
                 row_out.operator("anime.remove_outline", text="", icon='TRASH')
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LIGHT TAB  —  Material Colors  (always visible at top of Light tab)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ANIME_PT_material_colors(bpy.types.Panel):
+    bl_label = "Material Colors"
+    bl_idname = "ANIME_PT_material_colors"
+    bl_parent_id = "ANIME_PT_main_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "AniBlend"
+
+    @classmethod
+    def poll(cls, context):
+        if context.scene.anime_active_tab != 'LIGHT':
+            return False
+        mesh, node = _get_mesh_and_node(context)
+        return mesh is not None and node is not None
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='COLOR')
+
+    def draw(self, context):
+        layout = self.layout
+        mesh, node = _get_mesh_and_node(context)
+        if not mesh or not node:
+            return
+
+        # Base & Shadow color — the most important setting, always visible
+        col = layout.column(align=True)
+        if 'Base Color' in node.inputs:
+            col.prop(node.inputs['Base Color'], "default_value", text="Base Color")
+        if 'Shadow Color' in node.inputs:
+            col.prop(node.inputs['Shadow Color'], "default_value", text="Shadow Color")
+
+        # Color presets row
+        layout.separator(factor=0.5)
+        layout.label(text="Quick Presets:", icon='PRESET')
+        r1 = layout.row(align=True)
+        op1 = r1.operator("anime.apply_preset", text="Classic")
+        op1.preset = 'CLASSIC'
+        op2 = r1.operator("anime.apply_preset", text="Ghibli")
+        op2.preset = 'GHIBLI'
+        op3 = r1.operator("anime.apply_preset", text="Sunset")
+        op3.preset = 'SUNSET'
+        op4 = r1.operator("anime.apply_preset", text="Cyber")
+        op4.preset = 'CYBER'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LIGHT TAB  —  Light Sources  (list + active light settings)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class ANIME_UL_lights_list(bpy.types.UIList):
-    """UIList displaying all anime light sources for the mesh with color badges, name, and quick actions"""
+    """Compact light list: color · name · 👁 · 🗑"""
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         light = item
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             row = layout.row(align=True)
 
-            # 1. Color badge swatch (compact)
+            # Color badge
             sub_col = row.row(align=True)
-            sub_col.scale_x = 0.5
+            sub_col.scale_x = 0.4
             sub_col.prop(light, "marker_color", text="")
 
-            # 2. Light name (clearly visible text field, editable)
+            # Name
             row.prop(light, "name", text="", emboss=False)
 
-            # 3. Settings popup dialog button (opens dedicated window for this light)
-            op_set = row.operator("anime.light_popup_settings", text="", icon='PREFERENCES', emboss=False)
-            op_set.index = index
-
-            # 4. Hide/Show toggle button (quick access: toggles mute & viewport pointer)
+            # Hide/Show
             op_vis = row.operator(
                 "anime.light_toggle_visibility",
                 text="",
@@ -256,21 +293,20 @@ class ANIME_UL_lights_list(bpy.types.UIList):
             )
             op_vis.index = index
 
-            # 5. Delete button (quick access: removes this light)
+            # Delete (only if > 1 light)
             del_row = row.row(align=True)
             del_row.enabled = len(data.anime_lights) > 1
-            op_del = del_row.operator("anime.light_remove", text="", icon='TRASH', emboss=False)
+            op_del = del_row.operator("anime.light_remove", text="", icon='X', emboss=False)
             op_del.index = index
 
 
-class ANIME_PT_light_list(bpy.types.Panel):
+class ANIME_PT_light_sources(bpy.types.Panel):
     bl_label = "Light Sources"
-    bl_idname = "ANIME_PT_light_list"
+    bl_idname = "ANIME_PT_light_sources"
     bl_parent_id = "ANIME_PT_main_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "AniBlend"
-    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -289,10 +325,10 @@ class ANIME_PT_light_list(bpy.types.Panel):
             return
 
         if not mesh.anime_lights:
-            layout.label(text="Re-apply shader to initialize light system.", icon='INFO')
+            layout.label(text="Re-apply shader to initialize lights.", icon='INFO')
             return
 
-        # Top: Lights list + Add button
+        # ── Light list with +/- buttons ──
         row = layout.row()
         row.template_list(
             "ANIME_UL_lights_list", "",
@@ -301,136 +337,59 @@ class ANIME_PT_light_list(bpy.types.Panel):
             rows=3,
         )
 
-        col = row.column(align=True)
-        col.operator("anime.light_add", text="", icon='ADD')
-        del_col = col.column(align=True)
+        col_side = row.column(align=True)
+        col_side.operator("anime.light_add", text="", icon='ADD')
+        del_col = col_side.column(align=True)
         del_col.enabled = len(mesh.anime_lights) > 1
         del_col.operator("anime.light_remove", text="", icon='REMOVE')
 
-        # Dedicated Active Light Settings Card
+        # ── Active Light Settings ──
         idx = mesh.anime_active_light_index
-        if 0 <= idx < len(mesh.anime_lights):
-            active_light = mesh.anime_lights[idx]
-            ctrl = active_light.ctrl_obj
-
-            layout.separator()
-            box = layout.box()
-
-            # Header row of the settings card
-            h_row = box.row(align=True)
-            sub_c = h_row.row(align=True)
-            sub_c.scale_x = 0.5
-            sub_c.prop(active_light, "marker_color", text="")
-            h_row.label(text=f"Settings: {active_light.name}", icon='LIGHT')
-
-            # Quick popup dialog button right in the header
-            pop = h_row.operator("anime.light_popup_settings", text="Popup", icon='WINDOW')
-            pop.index = idx
-
-            # Section: Direction & Controller
-            if ctrl and ctrl.name in bpy.data.objects:
-                box_dir = box.box()
-                r_dir_title = box_dir.row(align=True)
-                r_dir_title.label(text="Light Direction", icon='EMPTY_DATA')
-                r_dir_title.operator("anime.light_select", text="Select in 3D View", icon='RESTRICT_SELECT_OFF')
-
-                box_dir.prop(ctrl, "rotation_euler", text="Rotation")
-
-                ptr = bpy.data.objects.get(f"{ctrl.name}_Pointer")
-                if ptr:
-                    box_dir.prop(ptr, "hide_viewport", text="Scene Pointer Sphere", icon='HIDE_OFF' if not ptr.hide_viewport else 'HIDE_ON')
-
-            # Section: Light Beam
-            box_beam = box.box()
-            box_beam.label(text="Light Beam", icon='LIGHT_SUN')
-            r_beam = box_beam.row(align=True)
-            r_beam.prop(active_light, "light_color", text="Color")
-            r_beam.prop(active_light, "strength", text="Strength")
-
-            # Section: Shadow & Shading
-            box_sh = box.box()
-            box_sh.label(text="Shadow & Shading", icon='MOD_FLUIDSIM')
-            box_sh.prop(active_light, "shadow_position", text="Shadow Position", slider=True)
-            box_sh.prop(active_light, "shadow_softness", text="Shadow Softness", slider=True)
-            box_sh.prop(active_light, "specular_size", text="Specular Highlight", slider=True)
-
-
-class ANIME_PT_material_colors(bpy.types.Panel):
-    bl_label = "Material Colors"
-    bl_idname = "ANIME_PT_material_colors"
-    bl_parent_id = "ANIME_PT_main_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "AniBlend"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        if context.scene.anime_active_tab != 'LIGHT':
-            return False
-        mesh, node = _get_mesh_and_node(context)
-        return mesh is not None and node is not None
-
-    def draw_header(self, context):
-        self.layout.label(text="", icon='COLOR')
-
-    def draw(self, context):
-        layout = self.layout
-        mesh, node = _get_mesh_and_node(context)
-        if not mesh or not node:
+        if not (0 <= idx < len(mesh.anime_lights)):
             return
 
-        box_mat = layout.box()
-        box_mat.label(text="Material Tones (Global)", icon='MATERIAL')
-        row_mat = box_mat.row(align=True)
-        if 'Base Color' in node.inputs:
-            row_mat.prop(node.inputs['Base Color'], "default_value", text="Base")
-        if 'Shadow Color' in node.inputs:
-            row_mat.prop(node.inputs['Shadow Color'], "default_value", text="Shadow")
+        active_light = mesh.anime_lights[idx]
+        ctrl = active_light.ctrl_obj
+
+        layout.separator(factor=0.3)
+
+        # Direction
+        if ctrl and ctrl.name in bpy.data.objects:
+            col_dir = layout.column(align=True)
+            row_dir = col_dir.row(align=True)
+            row_dir.label(text="Direction", icon='ORIENTATION_NORMAL')
+            sel_op = row_dir.operator("anime.light_select", text="Select", icon='RESTRICT_SELECT_OFF')
+            sel_op.index = idx
+            col_dir.prop(ctrl, "rotation_euler", text="")
+
+        # Color & Strength
+        layout.separator(factor=0.3)
+        col_beam = layout.column(align=True)
+        col_beam.label(text="Light Color", icon='LIGHT_SUN')
+        r_beam = col_beam.row(align=True)
+        r_beam.prop(active_light, "light_color", text="")
+        r_beam.prop(active_light, "strength", text="Power")
+
+        # Shadow & Specular
+        layout.separator(factor=0.3)
+        col_sh = layout.column(align=True)
+        col_sh.label(text="Shadow & Specular", icon='SHADING_RENDERED')
+        col_sh.prop(active_light, "shadow_position", text="Shadow Position", slider=True)
+        col_sh.prop(active_light, "shadow_softness", text="Shadow Softness", slider=True)
+        col_sh.prop(active_light, "specular_size", text="Highlight Size", slider=True)
 
 
-class ANIME_PT_light_presets(bpy.types.Panel):
-    bl_label = "Color Presets"
-    bl_idname = "ANIME_PT_light_presets"
-    bl_parent_id = "ANIME_PT_main_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "AniBlend"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        if context.scene.anime_active_tab != 'LIGHT':
-            return False
-        mesh, node = _get_mesh_and_node(context)
-        return mesh is not None and node is not None
-
-    def draw_header(self, context):
-        self.layout.label(text="", icon='PRESET')
-
-    def draw(self, context):
-        layout = self.layout
-        col = layout.column(align=True)
-        r1 = col.row(align=True)
-        op1 = r1.operator("anime.apply_preset", text="Classic Cel")
-        op1.preset = 'CLASSIC'
-        op2 = r1.operator("anime.apply_preset", text="Soft Ghibli")
-        op2.preset = 'GHIBLI'
-        r2 = col.row(align=True)
-        op3 = r2.operator("anime.apply_preset", text="Warm Sunset")
-        op3.preset = 'SUNSET'
-        op4 = r2.operator("anime.apply_preset", text="Cyberpunk")
-        op4.preset = 'CYBER'
-
+# ─────────────────────────────────────────────────────────────────────────────
+# OUTLINE TAB  —  Line Appearance
+# ─────────────────────────────────────────────────────────────────────────────
 
 class ANIME_PT_outline_settings(bpy.types.Panel):
-    bl_label = "Line Settings"
+    bl_label = "Line Appearance"
     bl_idname = "ANIME_PT_outline_settings"
     bl_parent_id = "ANIME_PT_main_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "AniBlend"
-    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
@@ -445,15 +404,21 @@ class ANIME_PT_outline_settings(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         mesh, _ = _get_mesh_and_node(context)
-        if mesh:
-            col = layout.column(align=True)
-            col.prop(mesh, "anime_outline_thickness", text="Thickness", slider=True)
-            col.prop(mesh, "anime_outline_opacity",   text="Opacity", slider=True)
-            col.prop(mesh, "anime_outline_color",     text="Color")
+        if not mesh:
+            return
 
+        col = layout.column(align=True)
+        col.prop(mesh, "anime_outline_thickness", text="Thickness", slider=True)
+        col.prop(mesh, "anime_outline_opacity",   text="Opacity", slider=True)
+        col.prop(mesh, "anime_outline_color",     text="Color")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OUTLINE TAB  —  Stroke Style
+# ─────────────────────────────────────────────────────────────────────────────
 
 class ANIME_PT_outline_style(bpy.types.Panel):
-    bl_label = "Stroke Style & Chaos"
+    bl_label = "Stroke Style"
     bl_idname = "ANIME_PT_outline_style"
     bl_parent_id = "ANIME_PT_main_panel"
     bl_space_type = 'VIEW_3D'
@@ -474,18 +439,24 @@ class ANIME_PT_outline_style(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         mesh, _ = _get_mesh_and_node(context)
-        if mesh:
-            row = layout.row(align=True)
-            row.prop(mesh, "anime_outline_style", expand=True)
+        if not mesh:
+            return
 
-            col = layout.column(align=True)
-            col.prop(mesh, "anime_outline_chaos", text="Hand Tremor", slider=True)
-            if mesh.anime_outline_style in {'DASHED', 'SKETCH', 'INK'}:
-                col.prop(mesh, "anime_outline_scale", text="Stroke Density", slider=True)
+        row = layout.row(align=True)
+        row.prop(mesh, "anime_outline_style", expand=True)
 
+        col = layout.column(align=True)
+        col.prop(mesh, "anime_outline_chaos", text="Hand Tremor", slider=True)
+        if mesh.anime_outline_style in {'DASHED', 'SKETCH', 'INK'}:
+            col.prop(mesh, "anime_outline_scale", text="Stroke Density", slider=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OUTLINE TAB  —  Stray Strokes
+# ─────────────────────────────────────────────────────────────────────────────
 
 class ANIME_PT_outline_stray(bpy.types.Panel):
-    bl_label = "Stray Sketch Strokes"
+    bl_label = "Stray Strokes"
     bl_idname = "ANIME_PT_outline_stray"
     bl_parent_id = "ANIME_PT_main_panel"
     bl_space_type = 'VIEW_3D'
@@ -519,12 +490,15 @@ class ANIME_PT_outline_stray(bpy.types.Panel):
             col.prop(mesh, "anime_stray_jitter",  text="Jitter", slider=True)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# REGISTRATION
+# ─────────────────────────────────────────────────────────────────────────────
+
 classes = (
     ANIME_UL_lights_list,
     ANIME_PT_main_panel,
-    ANIME_PT_light_list,
     ANIME_PT_material_colors,
-    ANIME_PT_light_presets,
+    ANIME_PT_light_sources,
     ANIME_PT_outline_settings,
     ANIME_PT_outline_style,
     ANIME_PT_outline_stray,
@@ -535,8 +509,8 @@ def register():
     bpy.types.Scene.anime_active_tab = bpy.props.EnumProperty(
         name="Tab",
         items=[
-            ('LIGHT', "Light", "Lighting direction, colors, and cel shading"),
-            ('OUTLINE', "Outline", "Anime ink outlines and sketch stray strokes"),
+            ('LIGHT', "Shading", "Material colors, lights, and cel shading"),
+            ('OUTLINE', "Outline", "Anime ink outlines and sketch strokes"),
         ],
         default='LIGHT',
         update=_update_tab,
