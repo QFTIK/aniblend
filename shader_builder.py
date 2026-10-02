@@ -434,24 +434,13 @@ def sync_material_lights(mesh_obj):
         if toon_node.node_tree is not ng:
             toon_node.node_tree = ng
 
-        # Restore saved Base/Shadow colors (they get reset to interface defaults on swap)
-        if saved_base and 'Base Color' in toon_node.inputs:
-            # Only restore if the saved value was non-black (user had set it)
-            if saved_base[0] != 0.0 or saved_base[1] != 0.0 or saved_base[2] != 0.0:
-                toon_node.inputs['Base Color'].default_value = saved_base
-        if saved_shadow and 'Shadow Color' in toon_node.inputs:
-            if saved_shadow[0] != 0.0 or saved_shadow[1] != 0.0 or saved_shadow[2] != 0.0:
-                toon_node.inputs['Shadow Color'].default_value = saved_shadow
-
-        # If Base/Shadow are still black (new material or corrupted), set sane defaults
-        if 'Base Color' in toon_node.inputs:
+        # Restore saved Base Color (socket gets reset to interface defaults on tree swap)
+        if saved_base is not None and 'Base Color' in toon_node.inputs:
+            toon_node.inputs['Base Color'].default_value = saved_base
+        elif 'Base Color' in toon_node.inputs:
             bc = toon_node.inputs['Base Color'].default_value
             if bc[0] == 0.0 and bc[1] == 0.0 and bc[2] == 0.0:
                 toon_node.inputs['Base Color'].default_value = (0.92, 0.78, 0.68, 1.0)
-        if 'Shadow Color' in toon_node.inputs:
-            sc = toon_node.inputs['Shadow Color'].default_value
-            if sc[0] == 0.0 and sc[1] == 0.0 and sc[2] == 0.0:
-                toon_node.inputs['Shadow Color'].default_value = (0.55, 0.42, 0.52, 1.0)
 
         # Wire Output Surface
         out_node = None
