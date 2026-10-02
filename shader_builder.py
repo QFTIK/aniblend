@@ -395,24 +395,6 @@ def setup_single_light_drivers(normal_node, ctrl_empty):
         drv.expression = 'v'
 
 
-def _find_light_dir_node(mat):
-    """Find the LightDirection Normal node for this material."""
-    if not mat or not mat.node_tree:
-        return None
-    node = mat.node_tree.nodes.get("LightDirection")
-    if node:
-        return node
-    toon = find_anime_toon_node(mat)
-    if toon and toon.node_tree:
-        return toon.node_tree.nodes.get("LightDirection")
-    return None
-
-
-def setup_sphere_drivers(mat, ctrl_empty):
-    """Legacy helper wiring LightDirection node for single-light setup."""
-    light_node = _find_light_dir_node(mat)
-    if light_node:
-        setup_single_light_drivers(light_node, ctrl_empty)
 
 
 def sync_material_lights(mesh_obj):
@@ -500,7 +482,11 @@ def sync_material_lights(mesh_obj):
                 mat.node_tree.links.new(normal_node.outputs['Normal'], toon_node.inputs[dir_socket_name])
 
             if light_item and light_item.ctrl_obj:
-                setup_single_light_drivers(normal_node, light_item.ctrl_obj)
+                ctrl = light_item.ctrl_obj
+                if ctrl.name in bpy.data.objects and ctrl.parent != mesh_obj:
+                    ctrl.parent = mesh_obj
+                    ctrl.matrix_parent_inverse = mesh_obj.matrix_world.inverted()
+                setup_single_light_drivers(normal_node, ctrl)
 
             if light_item:
                 col_socket = _get_light_socket_name(idx, 'color')
@@ -593,9 +579,11 @@ def heal_anime_materials(ng=None):
     """
     Scans all materials in the file. Any anime material that lost its node tree
     or is missing the per-material LightDirection node is automatically repaired.
-    Restores full color, shader connections, and drivers.
+    Restores full color, shader connections, drivers, and controller parenting.
     """
     for obj in bpy.data.objects:
+        if obj.name.endswith("_Pointer") and hasattr(obj, "visible_camera"):
+            obj.visible_camera = True
         if obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'} and hasattr(obj, "anime_lights") and obj.anime_lights:
             sync_material_lights(obj)
 
