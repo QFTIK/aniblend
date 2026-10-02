@@ -364,10 +364,16 @@ class ANIME_OT_light_add(bpy.types.Operator):
 
 
 class ANIME_OT_light_remove(bpy.types.Operator):
-    """Remove the active anime light source"""
+    """Remove an anime light source"""
     bl_idname = "anime.light_remove"
     bl_label = "Remove Light"
     bl_options = {'REGISTER', 'UNDO'}
+
+    index: bpy.props.IntProperty(
+        name="Light Index",
+        description="Index of light to remove (-1 for active light)",
+        default=-1,
+    )
 
     @classmethod
     def poll(cls, context):
@@ -380,8 +386,8 @@ class ANIME_OT_light_remove(bpy.types.Operator):
             self.report({'WARNING'}, "Cannot remove the only light source.")
             return {'CANCELLED'}
 
-        idx = mesh.anime_active_light_index
-        if idx < 0 or idx >= len(mesh.anime_lights):
+        idx = self.index if 0 <= self.index < len(mesh.anime_lights) else mesh.anime_active_light_index
+        if not (0 <= idx < len(mesh.anime_lights)):
             idx = len(mesh.anime_lights) - 1
 
         item = mesh.anime_lights[idx]
@@ -393,7 +399,7 @@ class ANIME_OT_light_remove(bpy.types.Operator):
             bpy.data.objects.remove(ctrl, do_unlink=True)
 
         mesh.anime_lights.remove(idx)
-        mesh.anime_active_light_index = max(0, idx - 1)
+        mesh.anime_active_light_index = max(0, min(idx, len(mesh.anime_lights) - 1))
 
         sync_material_lights(mesh)
 
@@ -410,27 +416,134 @@ class ANIME_OT_light_remove(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class ANIME_OT_light_toggle_visibility(bpy.types.Operator):
+    """Toggle visibility and mute of this light source in viewport and shader"""
+    bl_idname = "anime.light_toggle_visibility"
+    bl_label = "Toggle Light Visibility"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: bpy.props.IntProperty(name="Light Index", default=-1)
+
+    def execute(self, context):
+        mesh = _resolve_mesh(context)
+        if not mesh or not mesh.anime_lights:
+            return {'CANCELLED'}
+        idx = self.index if 0 <= self.index < len(mesh.anime_lights) else mesh.anime_active_light_index
+        if not (0 <= idx < len(mesh.anime_lights)):
+            return {'CANCELLED'}
+
+        light = mesh.anime_lights[idx]
+        light.enabled = not light.enabled
+        ctrl = light.ctrl_obj
+        if ctrl and ctrl.name in bpy.data.objects:
+            ctrl.hide_viewport = not light.enabled
+            ptr = bpy.data.objects.get(f"{ctrl.name}_Pointer")
+            if ptr:
+                ptr.hide_viewport = not light.enabled
+        sync_material_lights(mesh)
+        if context.area:
+            context.area.tag_redraw()
+        return {'FINISHED'}
+
+
+class ANIME_OT_light_popup_settings(bpy.types.Operator):
+    """Open dedicated settings dialog window for this light source"""
+    bl_idname = "anime.light_popup_settings"
+    bl_label = "Light Settings"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: bpy.props.IntProperty(name="Light Index", default=-1)
+
+    def invoke(self, context, event):
+        mesh = _resolve_mesh(context)
+        if not mesh or not mesh.anime_lights:
+            return {'CANCELLED'}
+        if 0 <= self.index < len(mesh.anime_lights):
+            mesh.anime_active_light_index = self.index
+        return context.window_manager.invoke_props_dialog(self, width=320)
+
+    def check(self, context):
+        return True
+
+    def draw(self, context):
+        layout = self.layout
+        mesh = _resolve_mesh(context)
+        if not mesh or not mesh.anime_lights:
+            layout.label(text="No active mesh or light.", icon='INFO')
+            return
+
+        idx = self.index if 0 <= self.index < len(mesh.anime_lights) else mesh.anime_active_light_index
+        if not (0 <= idx < len(mesh.anime_lights)):
+            return
+
+        light = mesh.anime_lights[idx]
+        ctrl = light.ctrl_obj
+
+        # Header: Marker + Name
+        top = layout.row(align=True)
+        sub = top.row(align=True)
+        sub.scale_x = 0.5
+        sub.prop(light, "marker_color", text="")
+        top.prop(light, "name", text="")
+
+        layout.separator()
+
+        # Direction (Euler)
+        if ctrl and ctrl.name in bpy.data.objects:
+            layout.label(text="Light Direction (Controller Euler):", icon='EMPTY_DATA')
+            layout.prop(ctrl, "rotation_euler", text="")
+
+            ptr = bpy.data.objects.get(f"{ctrl.name}_Pointer")
+            if ptr:
+                layout.prop(ptr, "hide_viewport", text="Show Scene Pointer Sphere", icon='HIDE_OFF' if not ptr.hide_viewport else 'HIDE_ON')
+
+        layout.separator()
+
+        # Light Beam
+        layout.label(text="Light Properties:", icon='LIGHT_SUN')
+        r_beam = layout.row(align=True)
+        r_beam.prop(light, "light_color", text="Color")
+        r_beam.prop(light, "strength", text="Strength")
+
+        layout.separator()
+
+        # Shadow & Specular
+        layout.label(text="Shadow & Shading:", icon='MOD_FLUIDSIM')
+        layout.prop(light, "shadow_position", text="Shadow Position", slider=True)
+        layout.prop(light, "shadow_softness", text="Shadow Softness", slider=True)
+        layout.prop(light, "specular_size", text="Specular Highlight", slider=True)
+
+    def execute(self, context):
+        mesh = _resolve_mesh(context)
+        if mesh:
+            sync_material_lights(mesh)
+        return {'FINISHED'}
+
+
 class ANIME_OT_light_select(bpy.types.Operator):
     """Select the active light's controller empty in 3D viewport"""
     bl_idname = "anime.light_select"
     bl_label = "Select Light Controller"
     bl_options = {'REGISTER', 'UNDO'}
 
-    index: bpy.props.IntProperty(default=0)
+    index: bpy.props.IntProperty(name="Light Index", default=-1)
 
     def execute(self, context):
         mesh = _resolve_mesh(context)
         if not mesh or not mesh.anime_lights:
             return {'CANCELLED'}
-        if 0 <= self.index < len(mesh.anime_lights):
-            mesh.anime_active_light_index = self.index
-            ctrl = mesh.anime_lights[self.index].ctrl_obj
+        idx = self.index if 0 <= self.index < len(mesh.anime_lights) else mesh.anime_active_light_index
+        if 0 <= idx < len(mesh.anime_lights):
+            mesh.anime_active_light_index = idx
+            ctrl = mesh.anime_lights[idx].ctrl_obj
             if ctrl and ctrl.name in bpy.data.objects:
                 for o in context.view_layer.objects:
                     o.select_set(False)
                 ctrl.select_set(True)
                 context.view_layer.objects.active = ctrl
-        return {'FINISHED'}
+                self.report({'INFO'}, f"Selected controller '{ctrl.name}'")
+                return {'FINISHED'}
+        return {'CANCELLED'}
 
 
 class ANIME_OT_apply_preset(bpy.types.Operator):
@@ -719,6 +832,8 @@ classes = (
     ANIME_OT_apply_preset,
     ANIME_OT_light_add,
     ANIME_OT_light_remove,
+    ANIME_OT_light_toggle_visibility,
+    ANIME_OT_light_popup_settings,
     ANIME_OT_light_select,
     ANIME_OT_add_outline,
     ANIME_OT_toggle_outline,

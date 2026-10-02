@@ -229,22 +229,38 @@ class ANIME_PT_main_panel(bpy.types.Panel):
 
 
 class ANIME_UL_lights_list(bpy.types.UIList):
-    """UIList displaying all anime light sources for the mesh with colored badges"""
+    """UIList displaying all anime light sources for the mesh with color badges, name, and quick actions"""
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         light = item
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             row = layout.row(align=True)
-            # Enable/mute toggle
-            row.prop(light, "enabled", text="", icon='CHECKBOX_HL' if light.enabled else 'CHECKBOX_DEHL', emboss=False)
-            # Light name
+
+            # 1. Color badge swatch (compact)
+            sub_col = row.row(align=True)
+            sub_col.scale_x = 0.5
+            sub_col.prop(light, "marker_color", text="")
+
+            # 2. Light name (clearly visible text field, editable)
             row.prop(light, "name", text="", emboss=False)
-            # Colored badge/swatch in panel
-            row.prop(light, "marker_color", text="")
-            # Viewport visibility toggle for its pointer
-            if light.ctrl_obj:
-                ptr = bpy.data.objects.get(f"{light.ctrl_obj.name}_Pointer")
-                if ptr:
-                    row.prop(ptr, "hide_viewport", text="", icon='HIDE_OFF' if not ptr.hide_viewport else 'HIDE_ON', emboss=False)
+
+            # 3. Settings popup dialog button (opens dedicated window for this light)
+            op_set = row.operator("anime.light_popup_settings", text="", icon='PREFERENCES', emboss=False)
+            op_set.index = index
+
+            # 4. Hide/Show toggle button (quick access: toggles mute & viewport pointer)
+            op_vis = row.operator(
+                "anime.light_toggle_visibility",
+                text="",
+                icon='HIDE_OFF' if light.enabled else 'HIDE_ON',
+                emboss=False,
+            )
+            op_vis.index = index
+
+            # 5. Delete button (quick access: removes this light)
+            del_row = row.row(align=True)
+            del_row.enabled = len(data.anime_lights) > 1
+            op_del = del_row.operator("anime.light_remove", text="", icon='TRASH', emboss=False)
+            op_del.index = index
 
 
 class ANIME_PT_light_list(bpy.types.Panel):
@@ -276,6 +292,7 @@ class ANIME_PT_light_list(bpy.types.Panel):
             layout.label(text="Re-apply shader to initialize light system.", icon='INFO')
             return
 
+        # Top: Lights list + Add button
         row = layout.row()
         row.template_list(
             "ANIME_UL_lights_list", "",
@@ -286,63 +303,61 @@ class ANIME_PT_light_list(bpy.types.Panel):
 
         col = row.column(align=True)
         col.operator("anime.light_add", text="", icon='ADD')
-        col.operator("anime.light_remove", text="", icon='REMOVE')
+        del_col = col.column(align=True)
+        del_col.enabled = len(mesh.anime_lights) > 1
+        del_col.operator("anime.light_remove", text="", icon='REMOVE')
 
-
-class ANIME_PT_light_direction(bpy.types.Panel):
-    bl_label = "Light Direction"
-    bl_idname = "ANIME_PT_light_direction"
-    bl_parent_id = "ANIME_PT_main_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "AniBlend"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        if context.scene.anime_active_tab != 'LIGHT':
-            return False
-        mesh, node = _get_mesh_and_node(context)
-        return mesh is not None and node is not None
-
-    def draw_header(self, context):
-        self.layout.label(text="", icon='LIGHT_SUN')
-
-    def draw(self, context):
-        layout = self.layout
-        mesh, _ = _get_mesh_and_node(context)
-        if not mesh or not mesh.anime_lights:
-            layout.label(text="No lights configured.", icon='INFO')
-            return
-
+        # Dedicated Active Light Settings Card
         idx = mesh.anime_active_light_index
-        if idx < 0 or idx >= len(mesh.anime_lights):
-            idx = 0
-        light = mesh.anime_lights[idx]
-        ctrl = light.ctrl_obj
+        if 0 <= idx < len(mesh.anime_lights):
+            active_light = mesh.anime_lights[idx]
+            ctrl = active_light.ctrl_obj
 
-        if ctrl and ctrl.name in bpy.data.objects:
-            row = layout.row(align=True)
-            row.label(text=f"Selected: {light.name}", icon='EMPTY_DATA')
-            pointer = bpy.data.objects.get(f"{ctrl.name}_Pointer")
-            if pointer:
-                row.prop(pointer, "hide_viewport", text="Light Point", icon='HIDE_OFF' if not pointer.hide_viewport else 'HIDE_ON')
+            layout.separator()
+            box = layout.box()
 
-            layout.prop(ctrl, "rotation_euler", text="Rotation")
+            # Header row of the settings card
+            h_row = box.row(align=True)
+            sub_c = h_row.row(align=True)
+            sub_c.scale_x = 0.5
+            sub_c.prop(active_light, "marker_color", text="")
+            h_row.label(text=f"Settings: {active_light.name}", icon='LIGHT')
 
-            r_marker = layout.row(align=True)
-            r_marker.prop(light, "marker_color", text="Scene Marker Color")
+            # Quick popup dialog button right in the header
+            pop = h_row.operator("anime.light_popup_settings", text="Popup", icon='WINDOW')
+            pop.index = idx
 
-            box_tip = layout.box()
-            box_tip.label(text="Sphere in scene matches marker color", icon='LIGHT')
-            box_tip.label(text="Tip: Select sphere & press R to rotate", icon='INFO')
-        else:
-            layout.label(text="Controller not found. Re-add light.", icon='INFO')
+            # Section: Direction & Controller
+            if ctrl and ctrl.name in bpy.data.objects:
+                box_dir = box.box()
+                r_dir_title = box_dir.row(align=True)
+                r_dir_title.label(text="Light Direction", icon='EMPTY_DATA')
+                r_dir_title.operator("anime.light_select", text="Select in 3D View", icon='RESTRICT_SELECT_OFF')
+
+                box_dir.prop(ctrl, "rotation_euler", text="Rotation")
+
+                ptr = bpy.data.objects.get(f"{ctrl.name}_Pointer")
+                if ptr:
+                    box_dir.prop(ptr, "hide_viewport", text="Scene Pointer Sphere", icon='HIDE_OFF' if not ptr.hide_viewport else 'HIDE_ON')
+
+            # Section: Light Beam
+            box_beam = box.box()
+            box_beam.label(text="Light Beam", icon='LIGHT_SUN')
+            r_beam = box_beam.row(align=True)
+            r_beam.prop(active_light, "light_color", text="Color")
+            r_beam.prop(active_light, "strength", text="Strength")
+
+            # Section: Shadow & Shading
+            box_sh = box.box()
+            box_sh.label(text="Shadow & Shading", icon='MOD_FLUIDSIM')
+            box_sh.prop(active_light, "shadow_position", text="Shadow Position", slider=True)
+            box_sh.prop(active_light, "shadow_softness", text="Shadow Softness", slider=True)
+            box_sh.prop(active_light, "specular_size", text="Specular Highlight", slider=True)
 
 
-class ANIME_PT_light_colors(bpy.types.Panel):
-    bl_label = "Shading Colors"
-    bl_idname = "ANIME_PT_light_colors"
+class ANIME_PT_material_colors(bpy.types.Panel):
+    bl_label = "Material Colors"
+    bl_idname = "ANIME_PT_material_colors"
     bl_parent_id = "ANIME_PT_main_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -365,7 +380,6 @@ class ANIME_PT_light_colors(bpy.types.Panel):
         if not mesh or not node:
             return
 
-        # Global Material Colors
         box_mat = layout.box()
         box_mat.label(text="Material Tones (Global)", icon='MATERIAL')
         row_mat = box_mat.row(align=True)
@@ -373,52 +387,6 @@ class ANIME_PT_light_colors(bpy.types.Panel):
             row_mat.prop(node.inputs['Base Color'], "default_value", text="Base")
         if 'Shadow Color' in node.inputs:
             row_mat.prop(node.inputs['Shadow Color'], "default_value", text="Shadow")
-
-        # Active Light Color & Strength
-        if mesh.anime_lights:
-            idx = mesh.anime_active_light_index
-            if 0 <= idx < len(mesh.anime_lights):
-                light = mesh.anime_lights[idx]
-                box_l = layout.box()
-                box_l.label(text=f"{light.name} Light & Strength", icon='LIGHT_SUN')
-                row_l = box_l.row(align=True)
-                row_l.prop(light, "light_color", text="Light Color")
-                box_l.prop(light, "strength", text="Strength", slider=True)
-
-
-class ANIME_PT_light_tuning(bpy.types.Panel):
-    bl_label = "Shading Tuning"
-    bl_idname = "ANIME_PT_light_tuning"
-    bl_parent_id = "ANIME_PT_main_panel"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "AniBlend"
-    bl_options = {'DEFAULT_CLOSED'}
-
-    @classmethod
-    def poll(cls, context):
-        if context.scene.anime_active_tab != 'LIGHT':
-            return False
-        mesh, node = _get_mesh_and_node(context)
-        return mesh is not None and node is not None
-
-    def draw_header(self, context):
-        self.layout.label(text="", icon='MOD_SMOOTH')
-
-    def draw(self, context):
-        layout = self.layout
-        mesh, _ = _get_mesh_and_node(context)
-        if not mesh or not mesh.anime_lights:
-            return
-
-        idx = mesh.anime_active_light_index
-        if 0 <= idx < len(mesh.anime_lights):
-            light = mesh.anime_lights[idx]
-            col = layout.column(align=True)
-            col.label(text=f"Tuning: {light.name}", icon='MOD_SMOOTH')
-            col.prop(light, "shadow_position", text="Shadow Position", slider=True)
-            col.prop(light, "shadow_softness", text="Shadow Softness", slider=True)
-            col.prop(light, "specular_size", text="Highlight Size", slider=True)
 
 
 class ANIME_PT_light_presets(bpy.types.Panel):
@@ -555,9 +523,7 @@ classes = (
     ANIME_UL_lights_list,
     ANIME_PT_main_panel,
     ANIME_PT_light_list,
-    ANIME_PT_light_direction,
-    ANIME_PT_light_colors,
-    ANIME_PT_light_tuning,
+    ANIME_PT_material_colors,
     ANIME_PT_light_presets,
     ANIME_PT_outline_settings,
     ANIME_PT_outline_style,
