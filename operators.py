@@ -7,27 +7,16 @@ import bmesh
 from mathutils import Matrix, Vector
 from .shader_builder import (
     create_anime_material, find_anime_toon_node,
-    setup_sphere_drivers, CTRL_PROP,
+    CTRL_PROP,
     get_or_create_outline_material, OUTLINE_MOD_NAME,
     set_outline_style, set_outline_chaos, set_outline_opacity, set_outline_scale,
     find_outline_emission_node,
     get_or_create_stray_outline_material,
-    OUTLINE_STRAY_MOD_NAME, OUTLINE_STRAY_MAT_NAME,
+    OUTLINE_STRAY_MOD_NAME,
     set_stray_density, set_stray_opacity, set_stray_jitter, set_stray_color,
     heal_anime_materials,
-    sync_material_lights, _get_light_socket_name,
+    sync_material_lights,
 )
-
-LIGHT_PALETTE = [
-    (0.2, 1.0, 0.4, 1.0),   # 1: 🟢 Neon Green
-    (1.0, 0.9, 0.1, 1.0),   # 2: 🟡 Yellow
-    (0.15, 0.8, 1.0, 1.0),  # 3: 🔵 Cyan / Sky Blue
-    (1.0, 0.25, 0.8, 1.0),  # 4: 🟣 Magenta
-    (1.0, 0.5, 0.1, 1.0),   # 5: 🟠 Orange
-    (0.7, 0.3, 1.0, 1.0),   # 6: 🪻 Purple
-    (1.0, 0.2, 0.2, 1.0),   # 7: 🔴 Red
-    (0.2, 1.0, 0.9, 1.0),   # 8: 🌊 Aquamarine
-]
 
 
 def _resolve_mesh(context):
@@ -244,7 +233,7 @@ def _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=(0.2, 1.0, 0.4, 
     pointer_obj.color = marker_color
 
     if hasattr(pointer_obj, "visible_camera"):
-        pointer_obj.visible_camera = False
+        pointer_obj.visible_camera = True
     if hasattr(pointer_obj, "visible_shadow"):
         pointer_obj.visible_shadow = False
     if hasattr(pointer_obj, "visible_diffuse"):
@@ -285,6 +274,11 @@ def _create_or_ensure_light_ctrl(context, mesh_obj, light_item, index=0):
     light_item.ctrl_obj = ctrl
     if index == 0:
         mesh_obj[CTRL_PROP] = ctrl
+
+    # Parent controller to mesh_obj so it follows the mesh when moved, rotated, or scaled
+    if ctrl.parent != mesh_obj:
+        ctrl.parent = mesh_obj
+        ctrl.matrix_parent_inverse = mesh_obj.matrix_world.inverted()
 
     _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=light_item.marker_color, suffix=str(index+1))
     return ctrl
@@ -421,7 +415,13 @@ class ANIME_OT_light_add(bpy.types.Operator):
             return {'CANCELLED'}
 
         idx = len(mesh.anime_lights)
-        color = LIGHT_PALETTE[idx % len(LIGHT_PALETTE)]
+        default_colors = (
+            (1.0, 1.0, 1.0, 1.0),
+            (1.0, 0.9, 0.4, 1.0),
+            (0.4, 0.8, 1.0, 1.0),
+            (1.0, 0.5, 0.4, 1.0),
+        )
+        color = default_colors[idx % len(default_colors)]
 
         default_names = ["Key Light", "Fill Light", "Rim Light", "Bounce Light", "Top Light"]
         light_name = default_names[idx] if idx < len(default_names) else f"Light {idx + 1}"

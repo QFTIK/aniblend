@@ -5,12 +5,11 @@ Clean, intuitive layout with logical grouping.
 
 import bpy
 from .shader_builder import (
-    find_anime_toon_node, CTRL_PROP,
+    find_anime_toon_node,
     OUTLINE_MOD_NAME, OUTLINE_MAT_NAME,
     OUTLINE_STRAY_MOD_NAME, OUTLINE_STRAY_MAT_NAME,
     set_outline_style, set_outline_chaos, set_outline_opacity, set_outline_scale,
     find_outline_emission_node,
-    get_or_create_outline_material, get_or_create_stray_outline_material,
     set_stray_color,
 )
 from .operators import sync_stray_outline
