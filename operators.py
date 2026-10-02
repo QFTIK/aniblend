@@ -59,42 +59,41 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     pointer_obj = bpy.data.objects.get(pointer_name)
 
     R = max(ctrl.empty_display_size, 0.5)
-    r_point = max(0.08, R * 0.085)
+    r_point = max(0.04, R * 0.065)
 
     bm = bmesh.new()
 
-    # 1. Wireframe / polygonal Icosphere (subdivisions=1: 12 vertices, 20 triangular facets)
+    # 1. Subtle green wireframe icosphere at (0, 0, R)
     T_point = Matrix.Translation(Vector((0, 0, R)))
     bmesh.ops.create_icosphere(bm, subdivisions=1, radius=r_point, matrix=T_point)
 
-    # 2. Compact directional vector arrow pointing inward towards center
-    z_start = R - r_point * 0.5
+    # 2. Sleek thin central stem in native Blender gizmo style
+    z_start = R - r_point
     arrow_len = max(0.15, R * 0.32)
-    shaft_len = arrow_len * 0.55
-    cone_len = arrow_len * 0.45
+    cone_len = arrow_len * 0.42
+    shaft_len = arrow_len - cone_len
 
-    # Shaft (6 segments, open caps for hollow wireframe)
     z_shaft_mid = z_start - shaft_len / 2.0
     T_shaft = Matrix.Translation(Vector((0, 0, z_shaft_mid)))
     bmesh.ops.create_cone(
         bm,
-        cap_ends=False,
+        cap_ends=True,
         cap_tris=False,
-        segments=6,
-        radius1=r_point * 0.22,
-        radius2=r_point * 0.22,
+        segments=8,
+        radius1=0.003,
+        radius2=0.003,
         depth=shaft_len,
         matrix=T_shaft,
     )
 
-    # 3. Arrowhead cone pointing towards center (open base)
+    # 3. Clean 4-sided wireframe pyramid arrowhead pointing inward to center
     z_cone_mid = (z_start - shaft_len) - cone_len / 2.0
     T_cone = Matrix.Translation(Vector((0, 0, z_cone_mid)))
     bmesh.ops.create_cone(
         bm,
         cap_ends=False,
         cap_tris=False,
-        segments=6,
+        segments=4,
         radius1=0.001,          # tip pointing down -Z into center
         radius2=r_point * 0.65,  # base
         depth=cone_len,
@@ -123,11 +122,11 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     else:
         pointer_obj.data = mesh_data
 
-    # Wireframe modifier: makes vector unfilled, showing polygon wireframe lines only
+    # Wireframe modifier: makes vector unfilled with ultra-thin native Blender lines
     wire_mod = pointer_obj.modifiers.get("Wireframe")
     if not wire_mod:
         wire_mod = pointer_obj.modifiers.new(name="Wireframe", type='WIREFRAME')
-    wire_mod.thickness = max(0.012, R * 0.008)
+    wire_mod.thickness = 0.0025
     wire_mod.use_replace = True
 
     # Setup parenting & flags
