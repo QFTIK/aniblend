@@ -25,7 +25,7 @@ def _get_mesh_and_node(context):
         return None, None
 
     mesh = None
-    if obj.type == 'EMPTY' and "anime_bound_mesh" in obj:
+    if "anime_bound_mesh" in obj:
         mesh = obj["anime_bound_mesh"]
     elif obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
         mesh = obj
@@ -228,6 +228,67 @@ class ANIME_PT_main_panel(bpy.types.Panel):
                 row_out.operator("anime.remove_outline", text="", icon='TRASH')
 
 
+class ANIME_UL_lights_list(bpy.types.UIList):
+    """UIList displaying all anime light sources for the mesh with colored badges"""
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        light = item
+        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+            row = layout.row(align=True)
+            # Enable/mute toggle
+            row.prop(light, "enabled", text="", icon='CHECKBOX_HL' if light.enabled else 'CHECKBOX_DEHL', emboss=False)
+            # Light name
+            row.prop(light, "name", text="", emboss=False)
+            # Colored badge/swatch in panel
+            row.prop(light, "marker_color", text="")
+            # Viewport visibility toggle for its pointer
+            if light.ctrl_obj:
+                ptr = bpy.data.objects.get(f"{light.ctrl_obj.name}_Pointer")
+                if ptr:
+                    row.prop(ptr, "hide_viewport", text="", icon='HIDE_OFF' if not ptr.hide_viewport else 'HIDE_ON', emboss=False)
+
+
+class ANIME_PT_light_list(bpy.types.Panel):
+    bl_label = "Light Sources"
+    bl_idname = "ANIME_PT_light_list"
+    bl_parent_id = "ANIME_PT_main_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "AniBlend"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        if context.scene.anime_active_tab != 'LIGHT':
+            return False
+        mesh, node = _get_mesh_and_node(context)
+        return mesh is not None and node is not None
+
+    def draw_header(self, context):
+        self.layout.label(text="", icon='LIGHT')
+
+    def draw(self, context):
+        layout = self.layout
+        mesh, _ = _get_mesh_and_node(context)
+        if not mesh:
+            return
+
+        if not mesh.anime_lights:
+            layout.label(text="Re-apply shader to initialize light system.", icon='INFO')
+            return
+
+        row = layout.row()
+        row.template_list(
+            "ANIME_UL_lights_list", "",
+            mesh, "anime_lights",
+            mesh, "anime_active_light_index",
+            rows=3,
+        )
+
+        col = row.column(align=True)
+        col.operator("anime.light_add", text="", icon='ADD')
+        col.operator("anime.light_remove", text="", icon='REMOVE')
+
+
 class ANIME_PT_light_direction(bpy.types.Panel):
     bl_label = "Light Direction"
     bl_idname = "ANIME_PT_light_direction"
@@ -250,19 +311,33 @@ class ANIME_PT_light_direction(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         mesh, _ = _get_mesh_and_node(context)
-        ctrl = mesh.get(CTRL_PROP) if mesh else None
+        if not mesh or not mesh.anime_lights:
+            layout.label(text="No lights configured.", icon='INFO')
+            return
+
+        idx = mesh.anime_active_light_index
+        if idx < 0 or idx >= len(mesh.anime_lights):
+            idx = 0
+        light = mesh.anime_lights[idx]
+        ctrl = light.ctrl_obj
+
         if ctrl and ctrl.name in bpy.data.objects:
             row = layout.row(align=True)
-            row.label(text=f"Controller: {ctrl.name}", icon='EMPTY_DATA')
+            row.label(text=f"Selected: {light.name}", icon='EMPTY_DATA')
             pointer = bpy.data.objects.get(f"{ctrl.name}_Pointer")
             if pointer:
                 row.prop(pointer, "hide_viewport", text="Light Point", icon='HIDE_OFF' if not pointer.hide_viewport else 'HIDE_ON')
+
             layout.prop(ctrl, "rotation_euler", text="Rotation")
+
+            r_marker = layout.row(align=True)
+            r_marker.prop(light, "marker_color", text="Scene Marker Color")
+
             box_tip = layout.box()
-            box_tip.label(text="🟢 Green Sphere: Light source position", icon='LIGHT')
+            box_tip.label(text="Sphere in scene matches marker color", icon='LIGHT')
             box_tip.label(text="Tip: Select sphere & press R to rotate", icon='INFO')
         else:
-            layout.label(text="No controller linked. Re-apply shader to generate.", icon='INFO')
+            layout.label(text="Controller not found. Re-add light.", icon='INFO')
 
 
 class ANIME_PT_light_colors(bpy.types.Panel):
@@ -286,11 +361,29 @@ class ANIME_PT_light_colors(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        _, node = _get_mesh_and_node(context)
-        if node and 'Base Color' in node.inputs and 'Shadow Color' in node.inputs:
-            row = layout.row(align=True)
-            row.prop(node.inputs['Base Color'], "default_value", text="Light")
-            row.prop(node.inputs['Shadow Color'], "default_value", text="Shadow")
+        mesh, node = _get_mesh_and_node(context)
+        if not mesh or not node:
+            return
+
+        # Global Material Colors
+        box_mat = layout.box()
+        box_mat.label(text="Material Tones (Global)", icon='MATERIAL')
+        row_mat = box_mat.row(align=True)
+        if 'Base Color' in node.inputs:
+            row_mat.prop(node.inputs['Base Color'], "default_value", text="Base")
+        if 'Shadow Color' in node.inputs:
+            row_mat.prop(node.inputs['Shadow Color'], "default_value", text="Shadow")
+
+        # Active Light Color & Strength
+        if mesh.anime_lights:
+            idx = mesh.anime_active_light_index
+            if 0 <= idx < len(mesh.anime_lights):
+                light = mesh.anime_lights[idx]
+                box_l = layout.box()
+                box_l.label(text=f"{light.name} Light & Strength", icon='LIGHT_SUN')
+                row_l = box_l.row(align=True)
+                row_l.prop(light, "light_color", text="Light Color")
+                box_l.prop(light, "strength", text="Strength", slider=True)
 
 
 class ANIME_PT_light_tuning(bpy.types.Panel):
@@ -314,15 +407,18 @@ class ANIME_PT_light_tuning(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        _, node = _get_mesh_and_node(context)
-        if node:
+        mesh, _ = _get_mesh_and_node(context)
+        if not mesh or not mesh.anime_lights:
+            return
+
+        idx = mesh.anime_active_light_index
+        if 0 <= idx < len(mesh.anime_lights):
+            light = mesh.anime_lights[idx]
             col = layout.column(align=True)
-            if 'Shadow Position' in node.inputs:
-                col.prop(node.inputs['Shadow Position'], "default_value", text="Shadow Position", slider=True)
-            if 'Shadow Softness' in node.inputs:
-                col.prop(node.inputs['Shadow Softness'], "default_value", text="Shadow Softness", slider=True)
-            if 'Specular Size' in node.inputs:
-                col.prop(node.inputs['Specular Size'], "default_value", text="Highlight Size", slider=True)
+            col.label(text=f"Tuning: {light.name}", icon='MOD_SMOOTH')
+            col.prop(light, "shadow_position", text="Shadow Position", slider=True)
+            col.prop(light, "shadow_softness", text="Shadow Softness", slider=True)
+            col.prop(light, "specular_size", text="Highlight Size", slider=True)
 
 
 class ANIME_PT_light_presets(bpy.types.Panel):
@@ -456,7 +552,9 @@ class ANIME_PT_outline_stray(bpy.types.Panel):
 
 
 classes = (
+    ANIME_UL_lights_list,
     ANIME_PT_main_panel,
+    ANIME_PT_light_list,
     ANIME_PT_light_direction,
     ANIME_PT_light_colors,
     ANIME_PT_light_tuning,

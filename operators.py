@@ -15,15 +15,27 @@ from .shader_builder import (
     OUTLINE_STRAY_MOD_NAME, OUTLINE_STRAY_MAT_NAME,
     set_stray_density, set_stray_opacity, set_stray_jitter, set_stray_color,
     heal_anime_materials,
+    sync_material_lights, _get_light_socket_name,
 )
+
+LIGHT_PALETTE = [
+    (0.2, 1.0, 0.4, 1.0),   # 1: 🟢 Neon Green
+    (1.0, 0.9, 0.1, 1.0),   # 2: 🟡 Yellow
+    (0.15, 0.8, 1.0, 1.0),  # 3: 🔵 Cyan / Sky Blue
+    (1.0, 0.25, 0.8, 1.0),  # 4: 🟣 Magenta
+    (1.0, 0.5, 0.1, 1.0),   # 5: 🟠 Orange
+    (0.7, 0.3, 1.0, 1.0),   # 6: 🪻 Purple
+    (1.0, 0.2, 0.2, 1.0),   # 7: 🔴 Red
+    (0.2, 1.0, 0.9, 1.0),   # 8: 🌊 Aquamarine
+]
 
 
 def _resolve_mesh(context):
-    """Helper to get the bound mesh from any selected object (mesh or sphere controller)."""
+    """Helper to get the bound mesh from any selected object (mesh, sphere controller, or pointer)."""
     obj = context.active_object
     if not obj:
         return None
-    if obj.type == 'EMPTY' and "anime_bound_mesh" in obj:
+    if "anime_bound_mesh" in obj:
         mesh = obj["anime_bound_mesh"]
         if mesh and mesh.name in bpy.data.objects:
             return mesh
@@ -32,9 +44,77 @@ def _resolve_mesh(context):
     return None
 
 
-def _get_or_create_pointer_material():
-    """Neon lime-green emission material for the light source point and arrow."""
-    mat_name = "M_AniBlend_LightGizmo"
+def _on_light_prop_update(self, context):
+    mesh = _resolve_mesh(context)
+    if mesh:
+        sync_material_lights(mesh)
+        if context.area:
+            context.area.tag_redraw()
+
+
+def _on_marker_color_update(self, context):
+    if self.ctrl_obj:
+        _update_pointer_color(self.ctrl_obj, self.marker_color)
+    if context.area:
+        context.area.tag_redraw()
+
+
+class AnimeLightItem(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty(name="Name", default="Light")
+    marker_color: bpy.props.FloatVectorProperty(
+        name="Marker Color",
+        subtype='COLOR',
+        size=4,
+        min=0.0, max=1.0,
+        default=(0.2, 1.0, 0.4, 1.0),
+        update=_on_marker_color_update,
+    )
+    light_color: bpy.props.FloatVectorProperty(
+        name="Light Color",
+        subtype='COLOR',
+        size=4,
+        min=0.0, max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0),
+        update=_on_light_prop_update,
+    )
+    strength: bpy.props.FloatProperty(
+        name="Strength",
+        default=1.0,
+        min=0.0, max=5.0,
+        update=_on_light_prop_update,
+    )
+    shadow_position: bpy.props.FloatProperty(
+        name="Shadow Position",
+        default=0.4,
+        min=-1.0, max=1.0,
+        update=_on_light_prop_update,
+    )
+    shadow_softness: bpy.props.FloatProperty(
+        name="Shadow Softness",
+        default=0.08,
+        min=0.001, max=1.0,
+        update=_on_light_prop_update,
+    )
+    specular_size: bpy.props.FloatProperty(
+        name="Highlight Size",
+        default=0.10,
+        min=0.0, max=0.8,
+        update=_on_light_prop_update,
+    )
+    enabled: bpy.props.BoolProperty(
+        name="Enabled",
+        default=True,
+        update=_on_light_prop_update,
+    )
+    ctrl_obj: bpy.props.PointerProperty(
+        name="Controller",
+        type=bpy.types.Object,
+    )
+
+
+def _get_or_create_pointer_material(color=(0.2, 1.0, 0.4, 1.0), suffix=""):
+    """Emission material for the light source point matching the marker color."""
+    mat_name = f"M_AniBlend_LightGizmo_{suffix}" if suffix else "M_AniBlend_LightGizmo"
     mat = bpy.data.materials.get(mat_name)
     if not mat:
         mat = bpy.data.materials.new(name=mat_name)
@@ -43,18 +123,34 @@ def _get_or_create_pointer_material():
         nodes.clear()
         out = nodes.new('ShaderNodeOutputMaterial')
         emit = nodes.new('ShaderNodeEmission')
-        emit.inputs['Color'].default_value = (0.2, 1.0, 0.4, 1.0)
+        emit.inputs['Color'].default_value = color
         emit.inputs['Strength'].default_value = 2.0
         mat.node_tree.links.new(emit.outputs['Emission'], out.inputs['Surface'])
-    mat.diffuse_color = (0.2, 1.0, 0.4, 1.0)
+    else:
+        for node in mat.node_tree.nodes:
+            if node.type == 'EMISSION' and 'Color' in node.inputs:
+                node.inputs['Color'].default_value = color
+    mat.diffuse_color = color
     mat.use_backface_culling = True
     return mat
 
 
-def _ensure_light_pointer(context, ctrl, mesh_obj):
+def _update_pointer_color(ctrl, color):
+    """Updates the emission color of the pointer object attached to ctrl."""
+    pointer_name = f"{ctrl.name}_Pointer"
+    pointer_obj = bpy.data.objects.get(pointer_name)
+    if pointer_obj and pointer_obj.data.materials:
+        mat = pointer_obj.data.materials[0]
+        if mat and mat.node_tree:
+            for node in mat.node_tree.nodes:
+                if node.type == 'EMISSION' and 'Color' in node.inputs:
+                    node.inputs['Color'].default_value = color
+            mat.diffuse_color = color
+
+
+def _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=(0.2, 1.0, 0.4, 1.0), suffix=""):
     """
-    Creates or updates the green light indicator sphere at (0, 0, R) on the controller sphere.
-    Maximally clean and simple, perfectly indicating light direction with 0 flickering.
+    Creates or updates the colored light indicator sphere at (0, 0, R) on the controller sphere.
     """
     pointer_name = f"{ctrl.name}_Pointer"
     pointer_obj = bpy.data.objects.get(pointer_name)
@@ -64,7 +160,6 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
 
     bm = bmesh.new()
 
-    # Subtle smooth green indicator sphere at (0, 0, R)
     T_point = Matrix.Translation(Vector((0, 0, R)))
     bmesh.ops.create_icosphere(bm, subdivisions=2, radius=r_point, matrix=T_point)
     for face in bm.faces:
@@ -79,7 +174,7 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     bm.to_mesh(mesh_data)
     bm.free()
 
-    mat = _get_or_create_pointer_material()
+    mat = _get_or_create_pointer_material(color=marker_color, suffix=suffix or ctrl.name)
     if not mesh_data.materials:
         mesh_data.materials.append(mat)
     else:
@@ -92,12 +187,10 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     else:
         pointer_obj.data = mesh_data
 
-    # Remove wireframe modifier if previously present
     wire_mod = pointer_obj.modifiers.get("Wireframe")
     if wire_mod:
         pointer_obj.modifiers.remove(wire_mod)
 
-    # Setup parenting & flags
     pointer_obj.parent = ctrl
     pointer_obj.matrix_parent_inverse = Matrix.Identity(4)
     pointer_obj.location = (0, 0, 0)
@@ -108,7 +201,6 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     pointer_obj.hide_select = True
     pointer_obj.show_in_front = True
 
-    # Disable shadow/ray calculations to ensure smooth performance
     if hasattr(pointer_obj, "visible_shadow"):
         pointer_obj.visible_shadow = False
     if hasattr(pointer_obj, "visible_diffuse"):
@@ -121,28 +213,33 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
         pointer_obj.visible_volume_scatter = False
 
     pointer_obj["anime_bound_mesh"] = mesh_obj
-
     return pointer_obj
 
 
-def _find_or_create_ctrl(context, mesh_obj):
-    """Find existing or create new light-direction sphere controller for a mesh."""
-    existing = mesh_obj.get(CTRL_PROP)
-    if existing and isinstance(existing, bpy.types.Object) and existing.name in bpy.data.objects:
-        _ensure_light_pointer(context, existing, mesh_obj)
-        return existing
+def _create_or_ensure_light_ctrl(context, mesh_obj, light_item, index=0):
+    """Creates or updates a sphere controller Empty + Pointer for light_item."""
+    ctrl_name = f"{mesh_obj.name}_LightCtrl_{index+1}" if index > 0 else f"{mesh_obj.name}_LightCtrl"
+    ctrl = light_item.ctrl_obj
+    if not ctrl or ctrl.name not in bpy.data.objects:
+        ctrl = bpy.data.objects.get(ctrl_name)
+    if not ctrl:
+        bpy.ops.object.empty_add(type='SPHERE', location=mesh_obj.location)
+        ctrl = context.active_object
+        ctrl.name = ctrl_name
+        dim = max(mesh_obj.dimensions) if mesh_obj.dimensions else 2.0
+        ctrl.empty_display_size = max(dim * 0.8, 1.0)
+        ctrl.show_in_front = True
+        if index > 0:
+            # Offset initial rotation so lights don't face identical directions
+            ctrl.rotation_euler = (0.4, 0.0, 1.2 * index)
 
-    bpy.ops.object.empty_add(type='SPHERE', location=mesh_obj.location)
-    ctrl = context.active_object
-    ctrl.name = f"{mesh_obj.name}_LightCtrl"
-    dim = max(mesh_obj.dimensions) if mesh_obj.dimensions else 2.0
-    ctrl.empty_display_size = max(dim * 0.8, 1.0)
-    ctrl.show_in_front = True
-
-    mesh_obj[CTRL_PROP] = ctrl
     ctrl["anime_bound_mesh"] = mesh_obj
+    ctrl["anime_light_index"] = index
+    light_item.ctrl_obj = ctrl
+    if index == 0:
+        mesh_obj[CTRL_PROP] = ctrl
 
-    _ensure_light_pointer(context, ctrl, mesh_obj)
+    _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=light_item.marker_color, suffix=str(index+1))
     return ctrl
 
 
@@ -165,11 +262,26 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
     def execute(self, context):
         mesh_obj = context.active_object
 
-        # Create or reuse sphere controller
-        ctrl = _find_or_create_ctrl(context, mesh_obj)
+        # Initialize lights collection on mesh_obj if empty
+        if not mesh_obj.anime_lights:
+            l1 = mesh_obj.anime_lights.add()
+            l1.name = "Key Light"
+            l1.marker_color = LIGHT_PALETTE[0]
+            l1.light_color = (1.0, 1.0, 1.0, 1.0)
+            l1.strength = 1.0
+            l1.shadow_position = 0.4
+            l1.shadow_softness = 0.08
+            l1.specular_size = 0.10
+            l1.enabled = True
+
+        ctrl = _create_or_ensure_light_ctrl(context, mesh_obj, mesh_obj.anime_lights[0], index=0)
+        mesh_obj.anime_active_light_index = 0
 
         # Create material
-        mat = create_anime_material(name=f"M_Anime_{mesh_obj.name}")
+        mat_name = f"M_Anime_{mesh_obj.name}"
+        mat = bpy.data.materials.get(mat_name)
+        if not mat:
+            mat = create_anime_material(name=mat_name, num_lights=max(1, len(mesh_obj.anime_lights)))
 
         # Assign to mesh (always slot 0 for main material)
         context.view_layer.objects.active = mesh_obj
@@ -178,8 +290,8 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
         else:
             mesh_obj.data.materials.append(mat)
 
-        # Wire drivers: sphere rotation → shader light direction
-        setup_sphere_drivers(mat, ctrl)
+        # Wire all lights, normal nodes, and drivers
+        sync_material_lights(mesh_obj)
 
         # Auto-heal all materials in scene to ensure full color
         heal_anime_materials()
@@ -201,6 +313,123 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
         context.view_layer.objects.active = ctrl
 
         self.report({'INFO'}, f"Anime shader applied! Rotate '{ctrl.name}' sphere to move shadows.")
+        return {'FINISHED'}
+
+
+class ANIME_OT_light_add(bpy.types.Operator):
+    """Add a new anime light source with a color-coded scene marker"""
+    bl_idname = "anime.light_add"
+    bl_label = "Add Light"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        mesh = _resolve_mesh(context)
+        return mesh is not None and len(mesh.data.materials) > 0
+
+    def execute(self, context):
+        mesh = _resolve_mesh(context)
+        if not mesh:
+            return {'CANCELLED'}
+
+        idx = len(mesh.anime_lights)
+        color = LIGHT_PALETTE[idx % len(LIGHT_PALETTE)]
+
+        default_names = ["Key Light", "Fill Light", "Rim Light", "Bounce Light", "Top Light"]
+        light_name = default_names[idx] if idx < len(default_names) else f"Light {idx + 1}"
+
+        item = mesh.anime_lights.add()
+        item.name = light_name
+        item.marker_color = color
+        item.light_color = (1.0, 1.0, 1.0, 1.0)
+        item.strength = 1.0
+        item.shadow_position = 0.4
+        item.shadow_softness = 0.08
+        item.specular_size = 0.10
+        item.enabled = True
+
+        ctrl = _create_or_ensure_light_ctrl(context, mesh, item, index=idx)
+        mesh.anime_active_light_index = idx
+
+        sync_material_lights(mesh)
+
+        # Select the new controller empty in 3D viewport
+        for o in context.view_layer.objects:
+            o.select_set(False)
+        ctrl.select_set(True)
+        context.view_layer.objects.active = ctrl
+
+        self.report({'INFO'}, f"Added {light_name} with colored marker!")
+        return {'FINISHED'}
+
+
+class ANIME_OT_light_remove(bpy.types.Operator):
+    """Remove the active anime light source"""
+    bl_idname = "anime.light_remove"
+    bl_label = "Remove Light"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        mesh = _resolve_mesh(context)
+        return mesh is not None and len(mesh.anime_lights) > 1
+
+    def execute(self, context):
+        mesh = _resolve_mesh(context)
+        if not mesh or len(mesh.anime_lights) <= 1:
+            self.report({'WARNING'}, "Cannot remove the only light source.")
+            return {'CANCELLED'}
+
+        idx = mesh.anime_active_light_index
+        if idx < 0 or idx >= len(mesh.anime_lights):
+            idx = len(mesh.anime_lights) - 1
+
+        item = mesh.anime_lights[idx]
+        ctrl = item.ctrl_obj
+        if ctrl and ctrl.name in bpy.data.objects:
+            pointer = bpy.data.objects.get(f"{ctrl.name}_Pointer")
+            if pointer:
+                bpy.data.objects.remove(pointer, do_unlink=True)
+            bpy.data.objects.remove(ctrl, do_unlink=True)
+
+        mesh.anime_lights.remove(idx)
+        mesh.anime_active_light_index = max(0, idx - 1)
+
+        sync_material_lights(mesh)
+
+        # Select new active light's controller
+        if mesh.anime_lights:
+            new_active = mesh.anime_lights[mesh.anime_active_light_index]
+            if new_active.ctrl_obj and new_active.ctrl_obj.name in bpy.data.objects:
+                for o in context.view_layer.objects:
+                    o.select_set(False)
+                new_active.ctrl_obj.select_set(True)
+                context.view_layer.objects.active = new_active.ctrl_obj
+
+        self.report({'INFO'}, "Light source removed.")
+        return {'FINISHED'}
+
+
+class ANIME_OT_light_select(bpy.types.Operator):
+    """Select the active light's controller empty in 3D viewport"""
+    bl_idname = "anime.light_select"
+    bl_label = "Select Light Controller"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: bpy.props.IntProperty(default=0)
+
+    def execute(self, context):
+        mesh = _resolve_mesh(context)
+        if not mesh or not mesh.anime_lights:
+            return {'CANCELLED'}
+        if 0 <= self.index < len(mesh.anime_lights):
+            mesh.anime_active_light_index = self.index
+            ctrl = mesh.anime_lights[self.index].ctrl_obj
+            if ctrl and ctrl.name in bpy.data.objects:
+                for o in context.view_layer.objects:
+                    o.select_set(False)
+                ctrl.select_set(True)
+                context.view_layer.objects.active = ctrl
         return {'FINISHED'}
 
 
@@ -264,10 +493,21 @@ class ANIME_OT_apply_preset(bpy.types.Operator):
             },
         }
 
-        for key, val in presets[self.preset].items():
-            inp = node.inputs.get(key)
-            if inp:
-                inp.default_value = val
+        chosen = presets[self.preset]
+        if 'Base Color' in node.inputs:
+            node.inputs['Base Color'].default_value = chosen['Base Color']
+        if 'Shadow Color' in node.inputs:
+            node.inputs['Shadow Color'].default_value = chosen['Shadow Color']
+
+        # Update active light tuning
+        if mesh and mesh.anime_lights:
+            idx = mesh.anime_active_light_index
+            if 0 <= idx < len(mesh.anime_lights):
+                l = mesh.anime_lights[idx]
+                l.shadow_position = chosen['Shadow Position']
+                l.shadow_softness = chosen['Shadow Softness']
+                l.specular_size = chosen['Specular Size']
+            sync_material_lights(mesh)
 
         self.report({'INFO'}, f"Preset '{self.preset}' applied!")
         return {'FINISHED'}
@@ -474,8 +714,12 @@ class ANIME_OT_remove_outline(bpy.types.Operator):
 
 
 classes = (
+    AnimeLightItem,
     ANIME_OT_apply_shader,
     ANIME_OT_apply_preset,
+    ANIME_OT_light_add,
+    ANIME_OT_light_remove,
+    ANIME_OT_light_select,
     ANIME_OT_add_outline,
     ANIME_OT_toggle_outline,
     ANIME_OT_remove_outline,
@@ -488,6 +732,8 @@ def register():
             bpy.utils.register_class(cls)
         except ValueError:
             pass
+    bpy.types.Object.anime_lights = bpy.props.CollectionProperty(type=AnimeLightItem)
+    bpy.types.Object.anime_active_light_index = bpy.props.IntProperty(name="Active Light Index", default=0)
     try:
         heal_anime_materials()
     except Exception:
@@ -495,6 +741,10 @@ def register():
 
 
 def unregister():
+    if hasattr(bpy.types.Object, "anime_active_light_index"):
+        del bpy.types.Object.anime_active_light_index
+    if hasattr(bpy.types.Object, "anime_lights"):
+        del bpy.types.Object.anime_lights
     for cls in reversed(classes):
         try:
             bpy.utils.unregister_class(cls)
