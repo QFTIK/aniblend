@@ -270,19 +270,23 @@ class ANIME_PT_material_colors(bpy.types.Panel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ANIME_UL_lights_list(bpy.types.UIList):
-    """Compact light list: color · name · 👁 · 🗑"""
+    """Compact light list: color · name · [Cover/Add] · 👁 · ✕"""
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         light = item
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             row = layout.row(align=True)
 
-            # Color badge
+            # Color badge (reflects the selected light color)
             sub_col = row.row(align=True)
             sub_col.scale_x = 0.4
             sub_col.prop(light, "marker_color", text="")
 
             # Name
             row.prop(light, "name", text="", emboss=False)
+
+            # Layer mode badge for upper layers
+            if index > 0:
+                row.label(text="Cover" if light.blend_mode == 'COVER' else "Add")
 
             # Hide/Show
             op_vis = row.operator(
@@ -328,7 +332,7 @@ class ANIME_PT_light_sources(bpy.types.Panel):
             layout.label(text="Re-apply shader to initialize lights.", icon='INFO')
             return
 
-        # ── Light list with +/- buttons ──
+        # ── Light list with +/- and ▲/▼ layer buttons ──
         row = layout.row()
         row.template_list(
             "ANIME_UL_lights_list", "",
@@ -342,6 +346,12 @@ class ANIME_PT_light_sources(bpy.types.Panel):
         del_col = col_side.column(align=True)
         del_col.enabled = len(mesh.anime_lights) > 1
         del_col.operator("anime.light_remove", text="", icon='REMOVE')
+
+        col_side.separator(factor=0.5)
+        up_btn = col_side.operator("anime.light_move", text="", icon='TRIA_UP')
+        up_btn.direction = 'UP'
+        dn_btn = col_side.operator("anime.light_move", text="", icon='TRIA_DOWN')
+        dn_btn.direction = 'DOWN'
 
         # ── Active Light Settings ──
         idx = mesh.anime_active_light_index
@@ -369,6 +379,15 @@ class ANIME_PT_light_sources(bpy.types.Panel):
         r_beam = col_beam.row(align=True)
         r_beam.prop(active_light, "light_color", text="")
         r_beam.prop(active_light, "strength", text="Power")
+
+        # Layer & Blending (Cover vs Add, Opacity)
+        layout.separator(factor=0.3)
+        col_layer = layout.column(align=True)
+        col_layer.label(text="Layer & Blending", icon='RENDERLAYERS')
+        if idx > 0:
+            row_mode = col_layer.row(align=True)
+            row_mode.prop(active_light, "blend_mode", expand=True)
+        col_layer.prop(active_light, "opacity", text="Layer Opacity", slider=True)
 
         # Shadow & Specular
         layout.separator(factor=0.3)

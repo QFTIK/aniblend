@@ -52,11 +52,20 @@ def _on_light_prop_update(self, context):
             context.area.tag_redraw()
 
 
+def _on_light_color_update(self, context):
+    # Keep marker color and light color 1:1 in sync
+    self["marker_color"] = tuple(self.light_color)
+    if self.ctrl_obj:
+        _update_pointer_color(self.ctrl_obj, self.light_color)
+    _on_light_prop_update(self, context)
+
+
 def _on_marker_color_update(self, context):
+    # Keep light color and marker color 1:1 in sync
+    self["light_color"] = tuple(self.marker_color)
     if self.ctrl_obj:
         _update_pointer_color(self.ctrl_obj, self.marker_color)
-    if context.area:
-        context.area.tag_redraw()
+    _on_light_prop_update(self, context)
 
 
 class AnimeLightItem(bpy.types.PropertyGroup):
@@ -74,8 +83,8 @@ class AnimeLightItem(bpy.types.PropertyGroup):
         subtype='COLOR',
         size=4,
         min=0.0, max=1.0,
-        default=(1.0, 1.0, 1.0, 1.0),
-        update=_on_light_prop_update,
+        default=(0.2, 1.0, 0.4, 1.0),
+        update=_on_light_color_update,
     )
     strength: bpy.props.FloatProperty(
         name="Strength",
@@ -104,6 +113,24 @@ class AnimeLightItem(bpy.types.PropertyGroup):
     enabled: bpy.props.BoolProperty(
         name="Enabled",
         default=True,
+        update=_on_light_prop_update,
+    )
+    opacity: bpy.props.FloatProperty(
+        name="Opacity",
+        description="Layer opacity (0 = transparent, 1 = fully opaque)",
+        default=1.0,
+        min=0.0, max=1.0,
+        subtype='FACTOR',
+        update=_on_light_prop_update,
+    )
+    blend_mode: bpy.props.EnumProperty(
+        name="Layer Mode",
+        description="How this light interacts with layers beneath it",
+        items=[
+            ('COVER', "Cover", "Acts like an opaque paint layer covering underlying lighting"),
+            ('ADD', "Add", "Adds brightness on top of underlying lighting"),
+        ],
+        default='COVER',
         update=_on_light_prop_update,
     )
     ctrl_obj: bpy.props.PointerProperty(
@@ -136,16 +163,22 @@ def _get_or_create_pointer_material(color=(0.2, 1.0, 0.4, 1.0), suffix=""):
 
 
 def _update_pointer_color(ctrl, color):
-    """Updates the emission color of the pointer object attached to ctrl."""
+    """Updates the display and emission color of the pointer object and controller attached to ctrl."""
+    if not ctrl or ctrl.name not in bpy.data.objects:
+        return
+    ctrl.color = color
     pointer_name = f"{ctrl.name}_Pointer"
     pointer_obj = bpy.data.objects.get(pointer_name)
-    if pointer_obj and pointer_obj.data.materials:
-        mat = pointer_obj.data.materials[0]
-        if mat and mat.node_tree:
-            for node in mat.node_tree.nodes:
-                if node.type == 'EMISSION' and 'Color' in node.inputs:
-                    node.inputs['Color'].default_value = color
-            mat.diffuse_color = color
+    if pointer_obj:
+        pointer_obj.color = color
+        if pointer_obj.data and pointer_obj.data.materials:
+            mat = pointer_obj.data.materials[0]
+            if mat:
+                mat.diffuse_color = color
+                if mat.node_tree:
+                    for node in mat.node_tree.nodes:
+                        if node.type == 'EMISSION' and 'Color' in node.inputs:
+                            node.inputs['Color'].default_value = color
 
 
 def _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=(0.2, 1.0, 0.4, 1.0), suffix=""):
@@ -200,6 +233,7 @@ def _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=(0.2, 1.0, 0.4, 
     pointer_obj.hide_render = True
     pointer_obj.hide_select = True
     pointer_obj.show_in_front = True
+    pointer_obj.color = marker_color
 
     if hasattr(pointer_obj, "visible_shadow"):
         pointer_obj.visible_shadow = False
@@ -233,6 +267,7 @@ def _create_or_ensure_light_ctrl(context, mesh_obj, light_item, index=0):
             # Offset initial rotation so lights don't face identical directions
             ctrl.rotation_euler = (0.4, 0.0, 1.2 * index)
 
+    ctrl.color = light_item.marker_color
     ctrl["anime_bound_mesh"] = mesh_obj
     ctrl["anime_light_index"] = index
     light_item.ctrl_obj = ctrl
@@ -341,12 +376,14 @@ class ANIME_OT_light_add(bpy.types.Operator):
         item = mesh.anime_lights.add()
         item.name = light_name
         item.marker_color = color
-        item.light_color = (1.0, 1.0, 1.0, 1.0)
+        item.light_color = color
         item.strength = 1.0
         item.shadow_position = 0.4
         item.shadow_softness = 0.08
         item.specular_size = 0.10
         item.enabled = True
+        item.opacity = 1.0
+        item.blend_mode = 'COVER'
 
         ctrl = _create_or_ensure_light_ctrl(context, mesh, item, index=idx)
         mesh.anime_active_light_index = idx
@@ -360,6 +397,56 @@ class ANIME_OT_light_add(bpy.types.Operator):
         context.view_layer.objects.active = ctrl
 
         self.report({'INFO'}, f"Added {light_name} with colored marker!")
+        return {'FINISHED'}
+
+
+class ANIME_OT_light_move(bpy.types.Operator):
+    """Move light layer up or down in the stack"""
+    bl_idname = "anime.light_move"
+    bl_label = "Move Light Layer"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    direction: bpy.props.EnumProperty(
+        name="Direction",
+        items=[
+            ('UP', "Up", "Move up in layer stack"),
+            ('DOWN', "Down", "Move down in layer stack"),
+        ],
+        default='UP',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        mesh = _resolve_mesh(context)
+        return mesh is not None and len(mesh.anime_lights) > 1
+
+    def execute(self, context):
+        mesh = _resolve_mesh(context)
+        if not mesh or not mesh.anime_lights:
+            return {'CANCELLED'}
+
+        idx = mesh.anime_active_light_index
+        n = len(mesh.anime_lights)
+
+        if self.direction == 'UP':
+            if idx <= 0:
+                return {'CANCELLED'}
+            target_idx = idx - 1
+        else:  # 'DOWN'
+            if idx >= n - 1:
+                return {'CANCELLED'}
+            target_idx = idx + 1
+
+        mesh.anime_lights.move(idx, target_idx)
+        mesh.anime_active_light_index = target_idx
+
+        # Re-sync materials with new light order
+        sync_material_lights(mesh)
+
+        if context.area:
+            context.area.tag_redraw()
+
+        self.report({'INFO'}, f"Moved light to layer {target_idx + 1}")
         return {'FINISHED'}
 
 
@@ -831,6 +918,7 @@ classes = (
     ANIME_OT_apply_shader,
     ANIME_OT_apply_preset,
     ANIME_OT_light_add,
+    ANIME_OT_light_move,
     ANIME_OT_light_remove,
     ANIME_OT_light_toggle_visibility,
     ANIME_OT_light_popup_settings,
