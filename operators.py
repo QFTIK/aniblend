@@ -43,10 +43,11 @@ def _get_or_create_pointer_material():
         nodes.clear()
         out = nodes.new('ShaderNodeOutputMaterial')
         emit = nodes.new('ShaderNodeEmission')
-        emit.inputs['Color'].default_value = (0.15, 1.0, 0.25, 1.0)
-        emit.inputs['Strength'].default_value = 2.5
+        emit.inputs['Color'].default_value = (0.2, 1.0, 0.4, 1.0)
+        emit.inputs['Strength'].default_value = 2.0
         mat.node_tree.links.new(emit.outputs['Emission'], out.inputs['Surface'])
-    mat.diffuse_color = (0.15, 1.0, 0.25, 1.0)
+    mat.diffuse_color = (0.2, 1.0, 0.4, 1.0)
+    mat.use_backface_culling = True
     return mat
 
 
@@ -54,6 +55,7 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     """
     Creates or updates the green light indicator sphere and incoming light vector arrow.
     Points from (0, 0, R) on the sphere towards (0, 0, 0) into the center of the model.
+    Constructed with clean non-intersecting geometry to eliminate any viewport flickering/Z-fighting.
     """
     pointer_name = f"{ctrl.name}_Pointer"
     pointer_obj = bpy.data.objects.get(pointer_name)
@@ -63,11 +65,11 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
 
     bm = bmesh.new()
 
-    # 1. Subtle green wireframe icosphere at (0, 0, R)
+    # 1. Subtle green polygonal icosphere at (0, 0, R)
     T_point = Matrix.Translation(Vector((0, 0, R)))
     bmesh.ops.create_icosphere(bm, subdivisions=1, radius=r_point, matrix=T_point)
 
-    # 2. Sleek thin central stem in native Blender gizmo style
+    # 2. Sleek thin central stem in native Blender gizmo style (clean 4-sided prism, 0 self-intersections)
     z_start = R - r_point
     arrow_len = max(0.15, R * 0.32)
     cone_len = arrow_len * 0.42
@@ -79,14 +81,14 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
         bm,
         cap_ends=True,
         cap_tris=False,
-        segments=8,
-        radius1=0.003,
-        radius2=0.003,
+        segments=4,
+        radius1=0.0045,
+        radius2=0.0045,
         depth=shaft_len,
         matrix=T_shaft,
     )
 
-    # 3. Clean 4-sided wireframe pyramid arrowhead pointing inward to center
+    # 3. Clean 4-sided open pyramid arrowhead pointing inward to center
     z_cone_mid = (z_start - shaft_len) - cone_len / 2.0
     T_cone = Matrix.Translation(Vector((0, 0, z_cone_mid)))
     bmesh.ops.create_cone(
@@ -122,12 +124,10 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     else:
         pointer_obj.data = mesh_data
 
-    # Wireframe modifier: makes vector unfilled with ultra-thin native Blender lines
+    # Remove wireframe modifier if previously present to prevent self-intersection flickering
     wire_mod = pointer_obj.modifiers.get("Wireframe")
-    if not wire_mod:
-        wire_mod = pointer_obj.modifiers.new(name="Wireframe", type='WIREFRAME')
-    wire_mod.thickness = 0.0025
-    wire_mod.use_replace = True
+    if wire_mod:
+        pointer_obj.modifiers.remove(wire_mod)
 
     # Setup parenting & flags
     pointer_obj.parent = ctrl
@@ -139,6 +139,19 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     pointer_obj.hide_render = True
     pointer_obj.hide_select = True
     pointer_obj.show_in_front = True
+
+    # Disable shadow/ray calculations to ensure perfectly smooth transform performance without jitter
+    if hasattr(pointer_obj, "visible_shadow"):
+        pointer_obj.visible_shadow = False
+    if hasattr(pointer_obj, "visible_diffuse"):
+        pointer_obj.visible_diffuse = False
+    if hasattr(pointer_obj, "visible_glossy"):
+        pointer_obj.visible_glossy = False
+    if hasattr(pointer_obj, "visible_transmission"):
+        pointer_obj.visible_transmission = False
+    if hasattr(pointer_obj, "visible_volume_scatter"):
+        pointer_obj.visible_volume_scatter = False
+
     pointer_obj["anime_bound_mesh"] = mesh_obj
 
     return pointer_obj
