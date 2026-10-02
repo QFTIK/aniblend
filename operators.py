@@ -53,9 +53,8 @@ def _get_or_create_pointer_material():
 
 def _ensure_light_pointer(context, ctrl, mesh_obj):
     """
-    Creates or updates the green light indicator sphere and incoming light vector arrow.
-    Points from (0, 0, R) on the sphere towards (0, 0, 0) into the center of the model.
-    Constructed with clean non-intersecting geometry to eliminate any viewport flickering/Z-fighting.
+    Creates or updates the green light indicator sphere at (0, 0, R) on the controller sphere.
+    Maximally clean and simple, perfectly indicating light direction with 0 flickering.
     """
     pointer_name = f"{ctrl.name}_Pointer"
     pointer_obj = bpy.data.objects.get(pointer_name)
@@ -65,42 +64,11 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
 
     bm = bmesh.new()
 
-    # 1. Subtle green polygonal icosphere at (0, 0, R)
+    # Subtle smooth green indicator sphere at (0, 0, R)
     T_point = Matrix.Translation(Vector((0, 0, R)))
-    bmesh.ops.create_icosphere(bm, subdivisions=1, radius=r_point, matrix=T_point)
-
-    # 2. Sleek thin central stem in native Blender gizmo style (clean 4-sided prism, 0 self-intersections)
-    z_start = R - r_point
-    arrow_len = max(0.15, R * 0.32)
-    cone_len = arrow_len * 0.42
-    shaft_len = arrow_len - cone_len
-
-    z_shaft_mid = z_start - shaft_len / 2.0
-    T_shaft = Matrix.Translation(Vector((0, 0, z_shaft_mid)))
-    bmesh.ops.create_cone(
-        bm,
-        cap_ends=True,
-        cap_tris=False,
-        segments=4,
-        radius1=0.0045,
-        radius2=0.0045,
-        depth=shaft_len,
-        matrix=T_shaft,
-    )
-
-    # 3. Clean 4-sided open pyramid arrowhead pointing inward to center
-    z_cone_mid = (z_start - shaft_len) - cone_len / 2.0
-    T_cone = Matrix.Translation(Vector((0, 0, z_cone_mid)))
-    bmesh.ops.create_cone(
-        bm,
-        cap_ends=False,
-        cap_tris=False,
-        segments=4,
-        radius1=0.001,          # tip pointing down -Z into center
-        radius2=r_point * 0.65,  # base
-        depth=cone_len,
-        matrix=T_cone,
-    )
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=r_point, matrix=T_point)
+    for face in bm.faces:
+        face.smooth = True
 
     mesh_data = bpy.data.meshes.get(f"{pointer_name}_Mesh")
     if not mesh_data:
@@ -124,7 +92,7 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     else:
         pointer_obj.data = mesh_data
 
-    # Remove wireframe modifier if previously present to prevent self-intersection flickering
+    # Remove wireframe modifier if previously present
     wire_mod = pointer_obj.modifiers.get("Wireframe")
     if wire_mod:
         pointer_obj.modifiers.remove(wire_mod)
@@ -140,7 +108,7 @@ def _ensure_light_pointer(context, ctrl, mesh_obj):
     pointer_obj.hide_select = True
     pointer_obj.show_in_front = True
 
-    # Disable shadow/ray calculations to ensure perfectly smooth transform performance without jitter
+    # Disable shadow/ray calculations to ensure smooth performance
     if hasattr(pointer_obj, "visible_shadow"):
         pointer_obj.visible_shadow = False
     if hasattr(pointer_obj, "visible_diffuse"):
