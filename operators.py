@@ -86,6 +86,14 @@ class AnimeLightItem(bpy.types.PropertyGroup):
         default=(0.2, 1.0, 0.4, 1.0),
         update=_on_light_color_update,
     )
+    shadow_color: bpy.props.FloatVectorProperty(
+        name="Shadow Color",
+        subtype='COLOR',
+        size=4,
+        min=0.0, max=1.0,
+        default=(0.65, 0.58, 0.68, 1.0),
+        update=_on_light_prop_update,
+    )
     strength: bpy.props.FloatProperty(
         name="Strength",
         default=1.0,
@@ -235,6 +243,8 @@ def _ensure_light_pointer(context, ctrl, mesh_obj, marker_color=(0.2, 1.0, 0.4, 
     pointer_obj.show_in_front = True
     pointer_obj.color = marker_color
 
+    if hasattr(pointer_obj, "visible_camera"):
+        pointer_obj.visible_camera = False
     if hasattr(pointer_obj, "visible_shadow"):
         pointer_obj.visible_shadow = False
     if hasattr(pointer_obj, "visible_diffuse"):
@@ -263,10 +273,12 @@ def _create_or_ensure_light_ctrl(context, mesh_obj, light_item, index=0):
         dim = max(mesh_obj.dimensions) if mesh_obj.dimensions else 2.0
         ctrl.empty_display_size = max(dim * 0.8, 1.0)
         ctrl.show_in_front = True
+        ctrl.hide_render = True
         if index > 0:
             # Offset initial rotation so lights don't face identical directions
             ctrl.rotation_euler = (0.4, 0.0, 1.2 * index)
 
+    ctrl.hide_render = True
     ctrl.color = light_item.marker_color
     ctrl["anime_bound_mesh"] = mesh_obj
     ctrl["anime_light_index"] = index
@@ -301,13 +313,16 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
         if not mesh_obj.anime_lights:
             l1 = mesh_obj.anime_lights.add()
             l1.name = "Key Light"
-            l1.marker_color = LIGHT_PALETTE[0]
+            l1.marker_color = (1.0, 1.0, 1.0, 1.0)
             l1.light_color = (1.0, 1.0, 1.0, 1.0)
+            l1.shadow_color = (0.65, 0.58, 0.68, 1.0)
             l1.strength = 1.0
             l1.shadow_position = 0.4
             l1.shadow_softness = 0.08
             l1.specular_size = 0.10
             l1.enabled = True
+            l1.opacity = 1.0
+            l1.blend_mode = 'COVER'
 
         ctrl = _create_or_ensure_light_ctrl(context, mesh_obj, mesh_obj.anime_lights[0], index=0)
         mesh_obj.anime_active_light_index = 0
@@ -351,6 +366,44 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class ANIME_OT_remove_shader(bpy.types.Operator):
+    """Remove Anime Shader and all its light controllers from the active mesh"""
+    bl_idname = "anime.remove_shader"
+    bl_label = "Remove Anime Shader"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        mesh = _resolve_mesh(context)
+        return mesh is not None and len(mesh.data.materials) > 0
+
+    def execute(self, context):
+        mesh = _resolve_mesh(context)
+        if not mesh:
+            return {'CANCELLED'}
+
+        # Remove all controllers and pointer spheres
+        for l in list(mesh.anime_lights):
+            if l.ctrl_obj and l.ctrl_obj.name in bpy.data.objects:
+                ptr = bpy.data.objects.get(f"{l.ctrl_obj.name}_Pointer")
+                if ptr:
+                    bpy.data.objects.remove(ptr, do_unlink=True)
+                bpy.data.objects.remove(l.ctrl_obj, do_unlink=True)
+
+        mesh.anime_lights.clear()
+        if CTRL_PROP in mesh:
+            del mesh[CTRL_PROP]
+
+        # Remove anime material from slots
+        for i in reversed(range(len(mesh.data.materials))):
+            mat = mesh.data.materials[i]
+            if mat and (mat.name.startswith("M_Anime_") or find_anime_toon_node(mat)):
+                mesh.data.materials.pop(index=i)
+
+        self.report({'INFO'}, f"Anime shader and controllers removed from '{mesh.name}'")
+        return {'FINISHED'}
+
+
 class ANIME_OT_light_add(bpy.types.Operator):
     """Add a new anime light source with a color-coded scene marker"""
     bl_idname = "anime.light_add"
@@ -377,6 +430,12 @@ class ANIME_OT_light_add(bpy.types.Operator):
         item.name = light_name
         item.marker_color = color
         item.light_color = color
+        item.shadow_color = (
+            max(0.05, color[0] * 0.45),
+            max(0.05, color[1] * 0.45),
+            max(0.08, color[2] * 0.55),
+            1.0,
+        )
         item.strength = 1.0
         item.shadow_position = 0.4
         item.shadow_softness = 0.08
@@ -916,6 +975,7 @@ class ANIME_OT_remove_outline(bpy.types.Operator):
 classes = (
     AnimeLightItem,
     ANIME_OT_apply_shader,
+    ANIME_OT_remove_shader,
     ANIME_OT_apply_preset,
     ANIME_OT_light_add,
     ANIME_OT_light_move,
@@ -929,6 +989,25 @@ classes = (
 )
 
 
+@bpy.app.handlers.persistent
+def _cleanup_orphaned_anime_controllers(scene, depsgraph=None):
+    """
+    Automatically cleans up sphere controllers and pointers when their
+    bound mesh object is deleted from the scene.
+    """
+    to_delete = []
+    for obj in list(bpy.data.objects):
+        if "anime_bound_mesh" in obj:
+            bound = obj.get("anime_bound_mesh")
+            if not bound or bound.name not in bpy.data.objects:
+                to_delete.append(obj)
+    for obj in to_delete:
+        try:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        except Exception:
+            pass
+
+
 def register():
     for cls in classes:
         try:
@@ -937,6 +1016,10 @@ def register():
             pass
     bpy.types.Object.anime_lights = bpy.props.CollectionProperty(type=AnimeLightItem)
     bpy.types.Object.anime_active_light_index = bpy.props.IntProperty(name="Active Light Index", default=0)
+
+    if _cleanup_orphaned_anime_controllers not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_cleanup_orphaned_anime_controllers)
+
     try:
         heal_anime_materials()
     except Exception:
@@ -944,6 +1027,9 @@ def register():
 
 
 def unregister():
+    if _cleanup_orphaned_anime_controllers in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_cleanup_orphaned_anime_controllers)
+
     if hasattr(bpy.types.Object, "anime_active_light_index"):
         del bpy.types.Object.anime_active_light_index
     if hasattr(bpy.types.Object, "anime_lights"):

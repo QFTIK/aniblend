@@ -199,6 +199,7 @@ class ANIME_PT_main_panel(bpy.types.Panel):
                 row_st = layout.row(align=True)
                 row_st.scale_y = 1.1
                 row_st.operator("anime.apply_shader", text="Re-apply Shader", icon='FILE_REFRESH')
+                row_st.operator("anime.remove_shader", text="", icon='TRASH')
 
         elif active_tab == 'OUTLINE':
             mod = mesh.modifiers.get(OUTLINE_MOD_NAME)
@@ -217,11 +218,11 @@ class ANIME_PT_main_panel(bpy.types.Panel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LIGHT TAB  —  Material Colors  (always visible at top of Light tab)
+# LIGHT TAB  —  Surface Base Fill (Заливка)  (always visible at top of Light tab)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ANIME_PT_material_colors(bpy.types.Panel):
-    bl_label = "Material Colors"
+    bl_label = "Base Fill (Заливка)"
     bl_idname = "ANIME_PT_material_colors"
     bl_parent_id = "ANIME_PT_main_panel"
     bl_space_type = 'VIEW_3D'
@@ -244,12 +245,10 @@ class ANIME_PT_material_colors(bpy.types.Panel):
         if not mesh or not node:
             return
 
-        # Base & Shadow color — the most important setting, always visible
+        # Main object surface color / fill (Заливка)
         col = layout.column(align=True)
         if 'Base Color' in node.inputs:
             col.prop(node.inputs['Base Color'], "default_value", text="Base Color")
-        if 'Shadow Color' in node.inputs:
-            col.prop(node.inputs['Shadow Color'], "default_value", text="Shadow Color")
 
         # Color presets row
         layout.separator(factor=0.5)
@@ -372,13 +371,14 @@ class ANIME_PT_light_sources(bpy.types.Panel):
             sel_op.index = idx
             col_dir.prop(ctrl, "rotation_euler", text="")
 
-        # Color & Strength
+        # Light & Shadow Colors
         layout.separator(factor=0.3)
         col_beam = layout.column(align=True)
-        col_beam.label(text="Light Color", icon='LIGHT_SUN')
-        r_beam = col_beam.row(align=True)
-        r_beam.prop(active_light, "light_color", text="")
-        r_beam.prop(active_light, "strength", text="Power")
+        col_beam.label(text="Light & Shadow Colors", icon='COLOR')
+        r_col = col_beam.row(align=True)
+        r_col.prop(active_light, "light_color", text="Light")
+        r_col.prop(active_light, "shadow_color", text="Shadow")
+        col_beam.prop(active_light, "strength", text="Light Power")
 
         # Layer & Blending (Cover vs Add, Opacity)
         layout.separator(factor=0.3)

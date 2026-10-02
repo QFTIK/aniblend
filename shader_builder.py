@@ -17,13 +17,14 @@ OUTLINE_STRAY_MOD_NAME = "Anime_Stray_Outline"
 def _get_light_socket_name(idx, prop):
     """
     Returns consistent socket names for light at index (0-based).
-    For index 0 (Light 1), keeps legacy socket names for 100% backward compatibility.
+    For index 0 (Light 1), keeps legacy socket names where possible.
     """
     i = idx + 1
     if i == 1:
         mapping = {
             'direction': 'Light Direction',
             'color': 'L1 Color',
+            'shadow': 'L1 Shadow Color',
             'strength': 'L1 Strength',
             'position': 'Shadow Position',
             'softness': 'Shadow Softness',
@@ -37,6 +38,7 @@ def _get_light_socket_name(idx, prop):
         mapping = {
             'direction': f'L{i} Direction',
             'color': f'L{i} Color',
+            'shadow': f'L{i} Shadow Color',
             'strength': f'L{i} Strength',
             'position': f'L{i} Shadow Position',
             'softness': f'L{i} Shadow Softness',
@@ -51,20 +53,22 @@ def _get_light_socket_name(idx, prop):
 def _build_multilight_toon_nodegroup(ng, num_lights):
     """
     Internal: (re)builds the Anime_Toon_Shader node group interface and node network
-    for exactly num_lights lights.  Only called when a new group is created or the
-    light count changes.
+    for exactly num_lights lights. Each light has its own Light Color and Shadow Color.
+    The overall surface Base Color (Заливка) tints the accumulated lighting.
     """
     iface = ng.interface
     iface.clear()
 
-    # 1. Global Color Sockets
+    # 1. Global Base Color Socket (Заливка - surface fill of the object)
     iface.new_socket(name="Base Color", in_out='INPUT', socket_type='NodeSocketColor').default_value = (0.92, 0.78, 0.68, 1.0)
+    # Legacy fallback socket
     iface.new_socket(name="Shadow Color", in_out='INPUT', socket_type='NodeSocketColor').default_value = (0.55, 0.42, 0.52, 1.0)
 
-    # 2. Per-Light Sockets
+    # 2. Per-Light Sockets (each light has Light Color + its own Shadow Color)
     for idx in range(num_lights):
         dir_name = _get_light_socket_name(idx, 'direction')
         col_name = _get_light_socket_name(idx, 'color')
+        shd_name = _get_light_socket_name(idx, 'shadow')
         str_name = _get_light_socket_name(idx, 'strength')
         pos_name = _get_light_socket_name(idx, 'position')
         sft_name = _get_light_socket_name(idx, 'softness')
@@ -75,6 +79,9 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
 
         iface.new_socket(name=dir_name, in_out='INPUT', socket_type='NodeSocketVector').default_value = (0.0, 0.0, 1.0)
         iface.new_socket(name=col_name, in_out='INPUT', socket_type='NodeSocketColor').default_value = (1.0, 1.0, 1.0, 1.0)
+        s_shd = iface.new_socket(name=shd_name, in_out='INPUT', socket_type='NodeSocketColor')
+        s_shd.default_value = (0.65, 0.58, 0.68, 1.0) if idx == 0 else (0.45, 0.48, 0.58, 1.0)
+
         s_str = iface.new_socket(name=str_name, in_out='INPUT', socket_type='NodeSocketFloat')
         s_str.default_value = 1.0
         s_str.min_value = 0.0
@@ -120,7 +127,7 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
     node_in = nodes.new('NodeGroupInput')
     node_in.location = (-1300, 0)
     node_out = nodes.new('NodeGroupOutput')
-    node_out.location = (2000, 0)
+    node_out.location = (2200, 0)
 
     geom = nodes.new('ShaderNodeNewGeometry')
     geom.location = (-1300, 400)
@@ -132,7 +139,7 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
     links.new(geom.outputs['Normal'], reflect.inputs[1])
 
     cel_factors = []
-    lit_colors = []
+    tone_colors = []
     spec_colors = []
 
     for idx in range(num_lights):
@@ -140,6 +147,7 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
 
         dir_name = _get_light_socket_name(idx, 'direction')
         col_name = _get_light_socket_name(idx, 'color')
+        shd_name = _get_light_socket_name(idx, 'shadow')
         str_name = _get_light_socket_name(idx, 'strength')
         pos_name = _get_light_socket_name(idx, 'position')
         sft_name = _get_light_socket_name(idx, 'softness')
@@ -182,25 +190,26 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         c_en.location = (-450, y_off)
         links.new(map_c.outputs['Result'], c_en.inputs[0])
         links.new(node_in.outputs[en_name], c_en.inputs[1])
+        cel_factors.append(c_en.outputs['Value'])
 
-        c_str = nodes.new('ShaderNodeMath')
-        c_str.operation = 'MULTIPLY'
-        c_str.location = (-250, y_off)
-        links.new(c_en.outputs['Value'], c_str.inputs[0])
-        links.new(node_in.outputs[str_name], c_str.inputs[1])
-        cel_factors.append(c_str.outputs['Value'])
+        # Scaled lit color: Light Color * Strength
+        scale_lit = nodes.new('ShaderNodeVectorMath')
+        scale_lit.operation = 'SCALE'
+        scale_lit.location = (-250, y_off - 150)
+        links.new(node_in.outputs[col_name], scale_lit.inputs[0])
+        links.new(node_in.outputs[str_name], scale_lit.inputs[3])
 
-        # Lit color contribution
-        mix_c = nodes.new('ShaderNodeMix')
-        mix_c.data_type = 'RGBA'
-        mix_c.blend_type = 'MIX'
-        mix_c.inputs[6].default_value = (0, 0, 0, 1)
-        mix_c.location = (-50, y_off)
-        links.new(c_str.outputs['Value'], mix_c.inputs[0])
-        links.new(node_in.outputs[col_name], mix_c.inputs[7])
-        lit_colors.append(mix_c.outputs[2])
+        # Per-light two-tone: mix(Shadow Color, Lit Color, cel_factor)
+        mix_tone = nodes.new('ShaderNodeMix')
+        mix_tone.data_type = 'RGBA'
+        mix_tone.blend_type = 'MIX'
+        mix_tone.location = (-50, y_off)
+        links.new(c_en.outputs['Value'], mix_tone.inputs[0])
+        links.new(node_in.outputs[shd_name], mix_tone.inputs[6])
+        links.new(scale_lit.outputs['Vector'], mix_tone.inputs[7])
+        tone_colors.append(mix_tone.outputs[2])
 
-        # Specular
+        # Specular Highlight
         dot_s = nodes.new('ShaderNodeVectorMath')
         dot_s.operation = 'DOT_PRODUCT'
         dot_s.location = (-850, y_off - 450)
@@ -239,9 +248,8 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         links.new(node_in.outputs[col_name], mix_s.inputs[7])
         spec_colors.append(mix_s.outputs[2])
 
-    # Accumulate cel factors and lit colors with layer blending (Cover vs Add + Opacity)
-    curr_cel = cel_factors[0]
-    curr_lit = lit_colors[0]
+    # Accumulate tone colors across light layers (Cover vs Add, modulated by Opacity)
+    curr_tone = tone_colors[0]
     curr_spec = spec_colors[0]
 
     for k in range(1, num_lights):
@@ -249,79 +257,42 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         opc_name = _get_light_socket_name(k, 'opacity')
         cov_name = _get_light_socket_name(k, 'cover')
 
-        # Effective mask = cel_factors[k] * opacity
+        # Effective mask where light k illuminates = cel_factors[k] * opacity
         eff_mask = nodes.new('ShaderNodeMath')
         eff_mask.operation = 'MULTIPLY'
-        eff_mask.location = (x_base, 350)
+        eff_mask.location = (x_base, 200)
         links.new(cel_factors[k], eff_mask.inputs[0])
         links.new(node_in.outputs[opc_name], eff_mask.inputs[1])
 
-        # ── 1. CEL FACTOR BLENDING ──
-        # Additive cel = clamp(curr_cel + eff_mask)
-        add_cel = nodes.new('ShaderNodeMath')
-        add_cel.operation = 'ADD'
-        add_cel.use_clamp = True
-        add_cel.location = (x_base + 130, 420)
-        links.new(curr_cel, add_cel.inputs[0])
-        links.new(eff_mask.outputs['Value'], add_cel.inputs[1])
+        # ── 1. COVER MODE: where light k shines, it covers underlying tone ──
+        cov_step = nodes.new('ShaderNodeMix')
+        cov_step.data_type = 'RGBA'
+        cov_step.blend_type = 'MIX'
+        cov_step.location = (x_base + 130, 200)
+        links.new(eff_mask.outputs['Value'], cov_step.inputs[0])
+        links.new(curr_tone, cov_step.inputs[6])
+        links.new(tone_colors[k], cov_step.inputs[7])
 
-        # Cover cel = mix(curr_cel, 1.0, eff_mask)
-        cov_cel = nodes.new('ShaderNodeMix')
-        cov_cel.data_type = 'FLOAT'
-        cov_cel.clamp_result = True
-        cov_cel.location = (x_base + 130, 260)
-        links.new(eff_mask.outputs['Value'], cov_cel.inputs[0])
-        links.new(curr_cel, cov_cel.inputs[2])
-        cov_cel.inputs[3].default_value = 1.0
+        # ── 2. ADD MODE: light k adds illumination on top of underlying tone ──
+        add_step = nodes.new('ShaderNodeMix')
+        add_step.data_type = 'RGBA'
+        add_step.blend_type = 'ADD'
+        add_step.location = (x_base + 130, 0)
+        links.new(eff_mask.outputs['Value'], add_step.inputs[0])
+        links.new(curr_tone, add_step.inputs[6])
+        links.new(tone_colors[k], add_step.inputs[7])
 
-        # Final cel for this step = mix(add_cel, cov_cel, cover_prop)
-        blend_cel = nodes.new('ShaderNodeMix')
-        blend_cel.data_type = 'FLOAT'
-        blend_cel.clamp_result = True
-        blend_cel.location = (x_base + 260, 340)
-        links.new(node_in.outputs[cov_name], blend_cel.inputs[0])
-        links.new(add_cel.outputs['Value'], blend_cel.inputs[2])
-        links.new(cov_cel.outputs[0], blend_cel.inputs[3])
-        curr_cel = blend_cel.outputs[0]
+        # ── 3. BLEND: mix between Add and Cover based on layer cover setting ──
+        blend_tone = nodes.new('ShaderNodeMix')
+        blend_tone.data_type = 'RGBA'
+        blend_tone.blend_type = 'MIX'
+        blend_tone.location = (x_base + 260, 100)
+        links.new(node_in.outputs[cov_name], blend_tone.inputs[0])
+        links.new(add_step.outputs[2], blend_tone.inputs[6])
+        links.new(cov_step.outputs[2], blend_tone.inputs[7])
+        curr_tone = blend_tone.outputs[2]
 
-        # ── 2. LIT COLOR BLENDING ──
-        # Scaled lit color by opacity
-        scaled_col = nodes.new('ShaderNodeMix')
-        scaled_col.data_type = 'RGBA'
-        scaled_col.blend_type = 'MIX'
-        scaled_col.inputs[6].default_value = (0, 0, 0, 1)
-        scaled_col.location = (x_base, 80)
-        links.new(node_in.outputs[opc_name], scaled_col.inputs[0])
-        links.new(lit_colors[k], scaled_col.inputs[7])
-
-        add_lit = nodes.new('ShaderNodeMix')
-        add_lit.data_type = 'RGBA'
-        add_lit.blend_type = 'ADD'
-        add_lit.inputs[0].default_value = 1.0
-        add_lit.location = (x_base + 130, 80)
-        links.new(curr_lit, add_lit.inputs[6])
-        links.new(scaled_col.outputs[2], add_lit.inputs[7])
-
-        # Cover lit color = mix(curr_lit, lit_colors[k], eff_mask)
-        cov_lit = nodes.new('ShaderNodeMix')
-        cov_lit.data_type = 'RGBA'
-        cov_lit.blend_type = 'MIX'
-        cov_lit.location = (x_base + 130, -80)
-        links.new(eff_mask.outputs['Value'], cov_lit.inputs[0])
-        links.new(curr_lit, cov_lit.inputs[6])
-        links.new(lit_colors[k], cov_lit.inputs[7])
-
-        # Final lit color for this step = mix(add_lit, cov_lit, cover_prop)
-        blend_lit = nodes.new('ShaderNodeMix')
-        blend_lit.data_type = 'RGBA'
-        blend_lit.blend_type = 'MIX'
-        blend_lit.location = (x_base + 260, 0)
-        links.new(node_in.outputs[cov_name], blend_lit.inputs[0])
-        links.new(add_lit.outputs[2], blend_lit.inputs[6])
-        links.new(cov_lit.outputs[2], blend_lit.inputs[7])
-        curr_lit = blend_lit.outputs[2]
-
-        # ── 3. SPECULAR BLENDING ──
+        # ── 4. SPECULAR ACCUMULATION ──
         scaled_spec = nodes.new('ShaderNodeMix')
         scaled_spec.data_type = 'RGBA'
         scaled_spec.blend_type = 'MIX'
@@ -339,41 +310,33 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         links.new(scaled_spec.outputs[2], add_sp.inputs[7])
         curr_spec = add_sp.outputs[2]
 
-    # Multiply with Base Color
-    base_lit = nodes.new('ShaderNodeMix')
-    base_lit.data_type = 'RGBA'
-    base_lit.blend_type = 'MULTIPLY'
-    base_lit.inputs[0].default_value = 1.0
-    base_lit.location = (250 + num_lights * 380, 0)
-    links.new(node_in.outputs['Base Color'], base_lit.inputs[6])
-    links.new(curr_lit, base_lit.inputs[7])
+    # Final Surface: Multiply accumulated lighting tone with Base Color (Заливка)
+    base_mult = nodes.new('ShaderNodeMix')
+    base_mult.data_type = 'RGBA'
+    base_mult.blend_type = 'MULTIPLY'
+    base_mult.inputs[0].default_value = 1.0
+    base_mult.location = (250 + num_lights * 380, 0)
+    links.new(node_in.outputs['Base Color'], base_mult.inputs[6])
+    links.new(curr_tone, base_mult.inputs[7])
 
-    # Mix cel with shadow
-    mix_cel = nodes.new('ShaderNodeMix')
-    mix_cel.data_type = 'RGBA'
-    mix_cel.location = (450 + num_lights * 380, 100)
-    links.new(curr_cel, mix_cel.inputs[0])
-    links.new(node_in.outputs['Shadow Color'], mix_cel.inputs[6])
-    links.new(base_lit.outputs[2], mix_cel.inputs[7])
-
-    # Add specular to surface
+    # Add Specular highlights
     final_color = nodes.new('ShaderNodeMix')
     final_color.data_type = 'RGBA'
     final_color.blend_type = 'ADD'
     final_color.inputs[0].default_value = 1.0
-    final_color.location = (650 + num_lights * 380, 100)
-    links.new(mix_cel.outputs[2], final_color.inputs[6])
+    final_color.location = (450 + num_lights * 380, 0)
+    links.new(base_mult.outputs[2], final_color.inputs[6])
     links.new(curr_spec, final_color.inputs[7])
 
     emit = nodes.new('ShaderNodeEmission')
     emit.inputs['Strength'].default_value = 1.0
-    emit.location = (850 + num_lights * 380, 100)
+    emit.location = (650 + num_lights * 380, 0)
     links.new(final_color.outputs[2], emit.inputs['Color'])
     links.new(emit.outputs['Emission'], node_out.inputs['Shader'])
 
-    # Stamp the node group with its light count and schema version
+    # Stamp the node group with its light count and schema version (v3 = per-light shadow)
     ng["_anime_num_lights"] = num_lights
-    ng["_anime_schema_ver"] = 2
+    ng["_anime_schema_ver"] = 3
 
 
 def _count_ng_lights(ng):
@@ -397,7 +360,7 @@ def get_or_create_multilight_toon_nodegroup(num_lights=1):
     if not ng or ng.bl_idname != "ShaderNodeTree":
         ng = bpy.data.node_groups.new(name=name, type="ShaderNodeTree")
         needs_build = True
-    elif _count_ng_lights(ng) != num_lights or ng.get("_anime_schema_ver", 0) != 2:
+    elif _count_ng_lights(ng) != num_lights or ng.get("_anime_schema_ver", 0) != 3:
         needs_build = True
 
     if needs_build:
@@ -541,6 +504,7 @@ def sync_material_lights(mesh_obj):
 
             if light_item:
                 col_socket = _get_light_socket_name(idx, 'color')
+                shd_socket = _get_light_socket_name(idx, 'shadow')
                 str_socket = _get_light_socket_name(idx, 'strength')
                 pos_socket = _get_light_socket_name(idx, 'position')
                 sft_socket = _get_light_socket_name(idx, 'softness')
@@ -551,6 +515,8 @@ def sync_material_lights(mesh_obj):
 
                 if col_socket in toon_node.inputs:
                     toon_node.inputs[col_socket].default_value = light_item.light_color
+                if shd_socket in toon_node.inputs and hasattr(light_item, "shadow_color"):
+                    toon_node.inputs[shd_socket].default_value = light_item.shadow_color
                 if str_socket in toon_node.inputs:
                     toon_node.inputs[str_socket].default_value = light_item.strength
                 if pos_socket in toon_node.inputs:
