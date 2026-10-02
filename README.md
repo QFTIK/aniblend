@@ -18,7 +18,7 @@ Tested on Blender 4.2+ and 5.0+.
 
 ## How to install
 
-1. Download `aniblend-1.0.0.zip` (or `aniblend.zip`) from the [Releases](https://github.com/QFTIK/aniblend/releases) page.
+1. Download `aniblend-1.1.0.zip` (or `aniblend.zip`) from the [Releases](https://github.com/QFTIK/aniblend/releases) page.
 2. In Blender, go to **Edit > Preferences > Add-ons** (or **Get Extensions**).
 3. Click the top-right menu icon and choose **Install from Disk...**
 4. Pick the downloaded `.zip` file and enable it.
