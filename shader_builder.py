@@ -308,8 +308,10 @@ def heal_anime_materials(ng=None):
         if not m or not m.node_tree:
             continue
 
-        # Skip and repair any outline materials (never add toon node group to them!)
+        # Skip and repair any outline or gizmo materials (never add toon node group to them!)
         name_low = m.name.lower()
+        if "gizmo" in name_low or "pointer" in name_low:
+            continue
         is_outline = (
             "outline" in name_low
             or "stray" in name_low

@@ -3,6 +3,8 @@ Operators for AniBlend Cel-Shader & Inverted Hull Outlines.
 """
 
 import bpy
+import bmesh
+from mathutils import Matrix, Vector
 from .shader_builder import (
     create_anime_material, find_anime_toon_node,
     setup_sphere_drivers, CTRL_PROP,
@@ -30,21 +32,126 @@ def _resolve_mesh(context):
     return None
 
 
+def _get_or_create_pointer_material():
+    """Neon lime-green emission material for the light source point and arrow."""
+    mat_name = "M_AniBlend_LightGizmo"
+    mat = bpy.data.materials.get(mat_name)
+    if not mat:
+        mat = bpy.data.materials.new(name=mat_name)
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        nodes.clear()
+        out = nodes.new('ShaderNodeOutputMaterial')
+        emit = nodes.new('ShaderNodeEmission')
+        emit.inputs['Color'].default_value = (0.15, 1.0, 0.25, 1.0)
+        emit.inputs['Strength'].default_value = 2.5
+        mat.node_tree.links.new(emit.outputs['Emission'], out.inputs['Surface'])
+    mat.diffuse_color = (0.15, 1.0, 0.25, 1.0)
+    return mat
+
+
+def _ensure_light_pointer(context, ctrl, mesh_obj):
+    """
+    Creates or updates the green light indicator sphere and incoming light vector arrow.
+    Points from (0, 0, R) on the sphere towards (0, 0, 0) into the center of the model.
+    """
+    pointer_name = f"{ctrl.name}_Pointer"
+    pointer_obj = bpy.data.objects.get(pointer_name)
+
+    R = max(ctrl.empty_display_size, 0.5)
+    r_point = max(0.06, R * 0.09)
+
+    bm = bmesh.new()
+
+    # 1. Green Light Point sphere at (0, 0, R)
+    T_point = Matrix.Translation(Vector((0, 0, R)))
+    bmesh.ops.create_icosphere(bm, subdivisions=2, radius=r_point, matrix=T_point)
+
+    # 2. Vector line/shaft towards center (0, 0, 0)
+    shaft_len = max(0.1, (R - r_point) - (R * 0.35))
+    z_mid = (R * 0.35) + shaft_len / 2.0
+    T_shaft = Matrix.Translation(Vector((0, 0, z_mid)))
+    bmesh.ops.create_cone(
+        bm,
+        cap_ends=True,
+        cap_tris=False,
+        segments=12,
+        radius1=r_point * 0.22,
+        radius2=r_point * 0.22,
+        depth=shaft_len,
+        matrix=T_shaft,
+    )
+
+    # 3. Arrowhead cone pointing towards center
+    cone_len = max(0.1, R * 0.28)
+    z_cone = (0.05 * R) + cone_len / 2.0
+    T_cone = Matrix.Translation(Vector((0, 0, z_cone)))
+    bmesh.ops.create_cone(
+        bm,
+        cap_ends=True,
+        cap_tris=False,
+        segments=12,
+        radius1=0.001,          # tip pointing down -Z into center
+        radius2=r_point * 0.65,  # base
+        depth=cone_len,
+        matrix=T_cone,
+    )
+
+    mesh_data = bpy.data.meshes.get(f"{pointer_name}_Mesh")
+    if not mesh_data:
+        mesh_data = bpy.data.meshes.new(f"{pointer_name}_Mesh")
+    else:
+        mesh_data.clear_geometry()
+
+    bm.to_mesh(mesh_data)
+    bm.free()
+
+    mat = _get_or_create_pointer_material()
+    if not mesh_data.materials:
+        mesh_data.materials.append(mat)
+    else:
+        mesh_data.materials[0] = mat
+
+    if not pointer_obj:
+        pointer_obj = bpy.data.objects.new(pointer_name, mesh_data)
+        coll = ctrl.users_collection[0] if ctrl.users_collection else context.scene.collection
+        coll.objects.link(pointer_obj)
+    else:
+        pointer_obj.data = mesh_data
+
+    # Setup parenting & flags
+    pointer_obj.parent = ctrl
+    pointer_obj.matrix_parent_inverse = Matrix.Identity(4)
+    pointer_obj.location = (0, 0, 0)
+    pointer_obj.rotation_euler = (0, 0, 0)
+    pointer_obj.scale = (1, 1, 1)
+
+    pointer_obj.hide_render = True
+    pointer_obj.hide_select = True
+    pointer_obj.show_in_front = True
+    pointer_obj["anime_bound_mesh"] = mesh_obj
+
+    return pointer_obj
+
+
 def _find_or_create_ctrl(context, mesh_obj):
     """Find existing or create new light-direction sphere controller for a mesh."""
     existing = mesh_obj.get(CTRL_PROP)
     if existing and isinstance(existing, bpy.types.Object) and existing.name in bpy.data.objects:
+        _ensure_light_pointer(context, existing, mesh_obj)
         return existing
 
     bpy.ops.object.empty_add(type='SPHERE', location=mesh_obj.location)
     ctrl = context.active_object
     ctrl.name = f"{mesh_obj.name}_LightCtrl"
-    ctrl.empty_display_size = max(mesh_obj.dimensions) * 0.8
+    dim = max(mesh_obj.dimensions) if mesh_obj.dimensions else 2.0
+    ctrl.empty_display_size = max(dim * 0.8, 1.0)
     ctrl.show_in_front = True
 
     mesh_obj[CTRL_PROP] = ctrl
     ctrl["anime_bound_mesh"] = mesh_obj
 
+    _ensure_light_pointer(context, ctrl, mesh_obj)
     return ctrl
 
 

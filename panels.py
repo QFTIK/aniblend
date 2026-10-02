@@ -254,8 +254,14 @@ class ANIME_PT_light_direction(bpy.types.Panel):
         if ctrl and ctrl.name in bpy.data.objects:
             row = layout.row(align=True)
             row.label(text=f"Controller: {ctrl.name}", icon='EMPTY_DATA')
+            pointer = bpy.data.objects.get(f"{ctrl.name}_Pointer")
+            if pointer:
+                row.prop(pointer, "hide_viewport", text="Vector Gizmo", icon='HIDE_OFF' if not pointer.hide_viewport else 'HIDE_ON')
             layout.prop(ctrl, "rotation_euler", text="Rotation")
-            layout.label(text="Rotate helper sphere with R to aim shadows", icon='INFO')
+            box_tip = layout.box()
+            box_tip.label(text="🟢 Green Point: Light source position", icon='LIGHT')
+            box_tip.label(text="➡️ Arrow: Light vector into model", icon='FORWARD')
+            box_tip.label(text="Tip: Select sphere & press R to rotate", icon='INFO')
         else:
             layout.label(text="No controller linked. Re-apply shader to generate.", icon='INFO')
 
