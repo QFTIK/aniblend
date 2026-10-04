@@ -1113,6 +1113,69 @@ classes = (
 
 _cleanup_timer_scheduled = False
 
+_pattern_aspect_timer_on = False
+
+
+def _pattern_aspect_tick():
+    """Live-correct screentone aspect from the active 3D viewport size (throttled)."""
+    try:
+        sc = getattr(bpy.context, 'scene', None)
+        if sc is None or getattr(sc, 'anime_pattern_rendering', False):
+            return 0.5
+        w = h = 0
+        scr = getattr(bpy.context, 'screen', None)
+        if scr is not None:
+            for area in scr.areas:
+                if area.type == 'VIEW_3D':
+                    for region in area.regions:
+                        if region.type == 'WINDOW':
+                            w, h = region.width, region.height
+                            break
+                if w and h:
+                    break
+        if w and h:
+            asp = max(0.1, min(4.0, w / h))
+            if abs(float(getattr(sc, 'anime_pattern_aspect', asp)) - asp) > 0.005:
+                sc.anime_pattern_aspect = asp
+    except Exception:
+        pass
+    return 0.5
+
+
+def _start_pattern_aspect_timer():
+    global _pattern_aspect_timer_on
+    if _pattern_aspect_timer_on:
+        return
+    _pattern_aspect_timer_on = True
+    try:
+        bpy.app.timers.register(_pattern_aspect_tick, first_interval=0.5)
+    except Exception:
+        _pattern_aspect_timer_on = False
+
+
+@bpy.app.handlers.persistent
+def _pattern_aspect_render_init(scene, depsgraph=None):
+    try:
+        from .shader_builder import _current_pattern_aspect
+        scene.anime_pattern_rendering = True
+        scene.anime_pattern_aspect = _current_pattern_aspect()
+    except Exception:
+        pass
+
+
+@bpy.app.handlers.persistent
+def _pattern_aspect_render_done(scene, depsgraph=None):
+    try:
+        scene.anime_pattern_rendering = False
+    except Exception:
+        pass
+
+
+@bpy.app.handlers.persistent
+def _pattern_aspect_load_post(dummy1=None, dummy2=None):
+    _start_pattern_aspect_timer()
+
+
 def _do_deferred_cleanup():
     global _cleanup_timer_scheduled
     _cleanup_timer_scheduled = False
@@ -1164,6 +1227,15 @@ def register():
 
     if _cleanup_orphaned_anime_controllers not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_cleanup_orphaned_anime_controllers)
+    if _pattern_aspect_render_init not in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.append(_pattern_aspect_render_init)
+    if _pattern_aspect_render_done not in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.append(_pattern_aspect_render_done)
+    if _pattern_aspect_render_done not in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.append(_pattern_aspect_render_done)
+    if _pattern_aspect_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_pattern_aspect_load_post)
+    _start_pattern_aspect_timer()
 
     try:
         heal_anime_materials()
@@ -1172,6 +1244,20 @@ def register():
 
 
 def unregister():
+    global _pattern_aspect_timer_on
+    if _pattern_aspect_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_pattern_aspect_load_post)
+    if _pattern_aspect_render_init in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.remove(_pattern_aspect_render_init)
+    if _pattern_aspect_render_done in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.remove(_pattern_aspect_render_done)
+    if _pattern_aspect_render_done in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.remove(_pattern_aspect_render_done)
+    try:
+        bpy.app.timers.unregister(_pattern_aspect_tick)
+    except Exception:
+        pass
+    _pattern_aspect_timer_on = False
     if _cleanup_orphaned_anime_controllers in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_cleanup_orphaned_anime_controllers)
 

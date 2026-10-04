@@ -8,6 +8,7 @@ import bpy
 
 NODE_GROUP_NAME = "Anime_Toon_Shader"
 CTRL_PROP = "anime_light_ctrl"       # custom property linking mesh ↔ sphere controller
+ASPECT_SOCKET = "Aspect Fix"         # global group input: viewport/render aspect for screen-space patterns
 OUTLINE_MAT_NAME = "M_Anime_Outline"
 OUTLINE_MOD_NAME = "Anime_Outline"
 OUTLINE_STRAY_MAT_NAME = "M_Anime_Stray_Outline"
@@ -159,6 +160,12 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         msk_name = _get_light_socket_name(idx, 'mask')
         iface.new_socket(name=msk_name, in_out='OUTPUT', socket_type='NodeSocketFloat')
 
+    # Global aspect correction for screen-space patterns (1.0 = square, 16/9 display = 1.78)
+    asp = iface.new_socket(name=ASPECT_SOCKET, in_out='INPUT', socket_type='NodeSocketFloat')
+    asp.default_value = 1.0
+    asp.min_value = 0.1
+    asp.max_value = 4.0
+
     # Build Internal Node Network
     nodes = ng.nodes
     links = ng.links
@@ -180,6 +187,24 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
 
     tex_obj = nodes.new('ShaderNodeTexCoord')
     tex_obj.location = (-1300, -200)
+
+    # Shared aspect-corrected screen coords: X * aspect keeps dots round on wide views
+    sep_w = nodes.new('ShaderNodeSeparateXYZ')
+    sep_w.location = (-1300, -400)
+    links.new(tex_obj.outputs['Window'], sep_w.inputs['Vector'])
+
+    asp_x = nodes.new('ShaderNodeMath')
+    asp_x.operation = 'MULTIPLY'
+    asp_x.location = (-1100, -400)
+    links.new(sep_w.outputs['X'], asp_x.inputs[0])
+    links.new(node_in.outputs[ASPECT_SOCKET], asp_x.inputs[1])
+
+    comb_w = nodes.new('ShaderNodeCombineXYZ')
+    comb_w.location = (-900, -400)
+    links.new(asp_x.outputs['Value'], comb_w.inputs['X'])
+    links.new(sep_w.outputs['Y'], comb_w.inputs['Y'])
+    links.new(sep_w.outputs['Z'], comb_w.inputs['Z'])
+    win_corr = comb_w.outputs['Vector']
 
     cel_factors = []
     tone_colors = []
@@ -263,7 +288,7 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         uv_scale.operation = 'SCALE'
         uv_scale.location = (-1050, y_pat)
         # Screen-space sampling: screentone stays fixed to camera like real manga tone
-        links.new(tex_obj.outputs['Window'], uv_scale.inputs[0])
+        links.new(win_corr, uv_scale.inputs[0])
         links.new(node_in.outputs[psc_name], uv_scale.inputs[3])
 
         # Edge softness shared by all patterns: w = blur * 0.4 (+ epsilon keeps blur 0 defined)
@@ -292,26 +317,71 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
             links.new(w_out, hi.inputs[1])
             return lo, hi
 
-        # Dots (halftone): Voronoi F1 distance -> dot mask
-        vor = nodes.new('ShaderNodeTexVoronoi')
-        vor.feature = 'F1'
-        vor.inputs['Scale'].default_value = 1.0
-        vor.location = (-850, y_pat)
-        links.new(uv_scale.outputs['Vector'], vor.inputs['Vector'])
+        # Dots (halftone): regular grid via fract distance -> uniform manga dots
+        sep = nodes.new('ShaderNodeSeparateXYZ')
+        sep.location = (-850, y_pat)
+        links.new(uv_scale.outputs['Vector'], sep.inputs['Vector'])
+
+        fx = nodes.new('ShaderNodeMath')
+        fx.operation = 'MODULO'
+        fx.inputs[1].default_value = 1.0
+        fx.location = (-650, y_pat + 50)
+        links.new(sep.outputs['X'], fx.inputs[0])
+
+        fy = nodes.new('ShaderNodeMath')
+        fy.operation = 'MODULO'
+        fy.inputs[1].default_value = 1.0
+        fy.location = (-650, y_pat - 50)
+        links.new(sep.outputs['Y'], fy.inputs[0])
+
+        dx = nodes.new('ShaderNodeMath')
+        dx.operation = 'SUBTRACT'
+        dx.inputs[1].default_value = 0.5
+        dx.location = (-450, y_pat + 50)
+        links.new(fx.outputs['Value'], dx.inputs[0])
+
+        dy = nodes.new('ShaderNodeMath')
+        dy.operation = 'SUBTRACT'
+        dy.inputs[1].default_value = 0.5
+        dy.location = (-450, y_pat - 50)
+        links.new(fy.outputs['Value'], dy.inputs[0])
+
+        dx2 = nodes.new('ShaderNodeMath')
+        dx2.operation = 'MULTIPLY'
+        dx2.location = (-250, y_pat + 50)
+        links.new(dx.outputs['Value'], dx2.inputs[0])
+        links.new(dx.outputs['Value'], dx2.inputs[1])
+
+        dy2 = nodes.new('ShaderNodeMath')
+        dy2.operation = 'MULTIPLY'
+        dy2.location = (-250, y_pat - 50)
+        links.new(dy.outputs['Value'], dy2.inputs[0])
+        links.new(dy.outputs['Value'], dy2.inputs[1])
+
+        dsum = nodes.new('ShaderNodeMath')
+        dsum.operation = 'ADD'
+        dsum.location = (-50, y_pat)
+        links.new(dx2.outputs['Value'], dsum.inputs[0])
+        links.new(dy2.outputs['Value'], dsum.inputs[1])
+
+        dlen = nodes.new('ShaderNodeMath')
+        dlen.operation = 'SQRT'
+        dlen.location = (150, y_pat)
+        links.new(dsum.outputs['Value'], dlen.inputs[0])
 
         dots_map = nodes.new('ShaderNodeMapRange')
         dots_map.interpolation_type = 'SMOOTHSTEP'
         dots_map.clamp = True
-        dots_map.location = (-650, y_pat)
-        links.new(vor.outputs['Distance'], dots_map.inputs['Value'])
-        dots_lo, dots_hi = _edge(0.45, -850, y_pat - 750)
+        dots_map.location = (350, y_pat)
+        links.new(dlen.outputs['Value'], dots_map.inputs['Value'])
+        dots_lo, dots_hi = _edge(0.35, -850, y_pat - 750)
         links.new(dots_lo.outputs['Value'], dots_map.inputs['From Min'])
         links.new(dots_hi.outputs['Value'], dots_map.inputs['From Max'])
 
         dots = nodes.new('ShaderNodeMath')
         dots.operation = 'SUBTRACT'
         dots.inputs[0].default_value = 1.0
-        dots.location = (-450, y_pat)
+        dots.location = (550, y_pat)
         links.new(dots_map.outputs['Result'], dots.inputs[1])
 
         # Hatch: Wave bands X -> lines
@@ -404,12 +474,12 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
             links.new(_src, _sel.inputs[3])
             m_sel = _sel.outputs[0]
 
-        # Apply pattern only inside shadow: tone = mix(tone, lit, pattern * strength * (1 - cel))
-        inv_cel = nodes.new('ShaderNodeMath')
-        inv_cel.operation = 'SUBTRACT'
-        inv_cel.inputs[0].default_value = 1.0
-        inv_cel.location = (150, y_pat - 550)
-        links.new(c_en.outputs['Value'], inv_cel.inputs[1])
+        # Apply pattern only inside deep shadow with a crisp tone edge (no smearing on curves)
+        deep = nodes.new('ShaderNodeMath')
+        deep.operation = 'LESS_THAN'
+        deep.inputs[1].default_value = 0.5
+        deep.location = (150, y_pat - 550)
+        links.new(c_en.outputs['Value'], deep.inputs[0])
 
         k1 = nodes.new('ShaderNodeMath')
         k1.operation = 'MULTIPLY'
@@ -421,7 +491,7 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         k2.operation = 'MULTIPLY'
         k2.location = (550, y_pat - 550)
         links.new(k1.outputs['Value'], k2.inputs[0])
-        links.new(inv_cel.outputs['Value'], k2.inputs[1])
+        links.new(deep.outputs['Value'], k2.inputs[1])
 
         tone_pat = nodes.new('ShaderNodeMix')
         tone_pat.data_type = 'RGBA'
@@ -580,9 +650,9 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
     # Flat color output for material-level image screentone overlays (v1.2)
     links.new(final_color.outputs[2], node_out.inputs['Color'])
 
-    # Stamp the node group with its light count and schema version (v5 = screen-space screentone + blur)
+    # Stamp the node group with its light count and schema version (v6 = aspect-fixed screentone)
     ng["_anime_num_lights"] = num_lights
-    ng["_anime_schema_ver"] = 5
+    ng["_anime_schema_ver"] = 6
 
 
 def _count_ng_lights(ng):
@@ -606,7 +676,7 @@ def get_or_create_multilight_toon_nodegroup(num_lights=1):
     if not ng or ng.bl_idname != "ShaderNodeTree":
         ng = bpy.data.node_groups.new(name=name, type="ShaderNodeTree")
         needs_build = True
-    elif _count_ng_lights(ng) != num_lights or ng.get("_anime_schema_ver", 0) != 5:
+    elif _count_ng_lights(ng) != num_lights or ng.get("_anime_schema_ver", 0) != 6:
         needs_build = True
 
     if needs_build:
@@ -707,8 +777,35 @@ def _sync_pattern_image_overlay(mat, toon_node, mesh_obj):
         return n
 
     uv = _get(_PAT_PREFIX + "UV", 'ShaderNodeTexCoord', 200, -600)
-    # Screen-space sampling: brush texture stays fixed to camera like real screentone
-    uv_out = uv.outputs['Window']
+    # Screen-space sampling with aspect fix: brush texture stays round and fixed to camera
+    sepw = _get(_PAT_PREFIX + "SepW", 'ShaderNodeSeparateXYZ', 200, -750)
+    try:
+        links.new(uv.outputs['Window'], sepw.inputs['Vector'])
+    except Exception:
+        pass
+    mulx = _get(_PAT_PREFIX + "MulX", 'ShaderNodeMath', 400, -750)
+    mulx.operation = 'MULTIPLY'
+    try:
+        _oscene = bpy.context.scene
+    except Exception:
+        _oscene = None
+    try:
+        mulx.inputs[1].default_value = _current_pattern_aspect()
+    except Exception:
+        pass
+    _drive_float_input(mulx, 1, _oscene)
+    try:
+        links.new(sepw.outputs['X'], mulx.inputs[0])
+    except Exception:
+        pass
+    combw = _get(_PAT_PREFIX + "CombW", 'ShaderNodeCombineXYZ', 600, -750)
+    try:
+        links.new(mulx.outputs['Value'], combw.inputs['X'])
+        links.new(sepw.outputs['Y'], combw.inputs['Y'])
+        links.new(sepw.outputs['Z'], combw.inputs['Z'])
+    except Exception:
+        pass
+    uv_out = combw.outputs['Vector']
 
     cur = toon_node.outputs['Color']
     for idx, li in img_lights:
@@ -775,6 +872,46 @@ def _sync_pattern_image_overlay(mat, toon_node, mesh_obj):
     for n in stale:
         if n.name not in keep:
             _rm(n)
+
+
+def _current_pattern_aspect():
+    """Render aspect (w/h with pixel aspect). Viewport is live-corrected via driver."""
+    try:
+        rd = bpy.context.scene.render
+        px = (rd.pixel_aspect_x / rd.pixel_aspect_y) if rd.pixel_aspect_y else 1.0
+        if rd.resolution_y:
+            return max(0.1, min(4.0, (rd.resolution_x / rd.resolution_y) * px))
+    except Exception:
+        pass
+    return 1.0
+
+
+def _drive_float_input(node, key, scene):
+    """Point a float socket/input at Scene.anime_pattern_aspect (idempotent-ish)."""
+    try:
+        inp = node.inputs[key]
+    except Exception:
+        return
+    try:
+        inp.driver_remove('default_value')
+    except Exception:
+        pass
+    if scene is None:
+        return
+    try:
+        fcurve = inp.driver_add('default_value')
+        drv = fcurve.driver
+        drv.type = 'SCRIPTED'
+        var = drv.variables.new()
+        var.name = 'v'
+        var.type = 'SINGLE_PROP'
+        tgt = var.targets[0]
+        tgt.id_type = 'SCENE'
+        tgt.id = scene
+        tgt.data_path = 'anime_pattern_aspect'
+        drv.expression = 'v'
+    except Exception:
+        pass
 
 
 def sync_material_lights(mesh_obj):
@@ -919,6 +1056,18 @@ def sync_material_lights(mesh_obj):
                         mat.node_tree.nodes.remove(n)
                 except Exception:
                     pass
+
+        # Aspect correction: render aspect as fallback, viewport aspect via live driver
+        try:
+            _scene = bpy.context.scene
+        except Exception:
+            _scene = None
+        if ASPECT_SOCKET in toon_node.inputs:
+            try:
+                toon_node.inputs[ASPECT_SOCKET].default_value = _current_pattern_aspect()
+            except Exception:
+                pass
+            _drive_float_input(toon_node, ASPECT_SOCKET, _scene)
 
         # Reconcile material-level image screentone overlay (v1.2)
         _sync_pattern_image_overlay(mat, toon_node, mesh_obj)

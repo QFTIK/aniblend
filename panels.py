@@ -575,6 +575,18 @@ def register():
         default='LIGHT',
         update=_update_tab,
     )
+    bpy.types.Scene.anime_pattern_aspect = bpy.props.FloatProperty(
+        name="Pattern Aspect",
+        description="Viewport/render aspect driving screen-space screentone (auto-updated)",
+        default=1.0,
+        min=0.1,
+        max=4.0,
+    )
+    bpy.types.Scene.anime_pattern_rendering = bpy.props.BoolProperty(
+        name="Pattern Rendering",
+        description="Internal flag: aspect follows render settings while rendering",
+        default=False,
+    )
 
     for target in (bpy.types.Object, bpy.types.Scene):
         target.anime_outline_thickness = bpy.props.FloatProperty(
@@ -720,3 +732,7 @@ def unregister():
 
     if hasattr(bpy.types.Scene, "anime_active_tab"):
         delattr(bpy.types.Scene, "anime_active_tab")
+    if hasattr(bpy.types.Scene, "anime_pattern_aspect"):
+        delattr(bpy.types.Scene, "anime_pattern_aspect")
+    if hasattr(bpy.types.Scene, "anime_pattern_rendering"):
+        delattr(bpy.types.Scene, "anime_pattern_rendering")
