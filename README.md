@@ -67,7 +67,6 @@
 | **Base Fill** | Global surface color (`Base Fill`) separated from light and shadow |
 | **Per-Light Shadow Tint** | Independent `Light Color` + `Shadow Color` per layer, e.g. warm sun with violet shadow |
 | **Shadow Control** | `Shadow Position`, `Shadow Softness`, `Highlight Size`, `Light Power` per layer |
-| **Presets** | `Classic Cel` · `Ghibli Watercolor` · `Golden Sunset` · `Cyberpunk Neon` |
 
 ### Outlines
 

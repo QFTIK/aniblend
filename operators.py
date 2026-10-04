@@ -168,6 +168,49 @@ class AnimeLightItem(bpy.types.PropertyGroup):
         subtype='FACTOR',
         update=_on_light_prop_update,
     )
+    pattern_light_strength: bpy.props.FloatProperty(
+        name="Light Pattern Strength",
+        description="How strongly the same pattern textures the lit areas (0 = clean light)",
+        default=0.0,
+        min=0.0, max=1.0,
+        subtype='FACTOR',
+        update=_on_light_prop_update,
+    )
+    light_pattern: bpy.props.EnumProperty(
+        name="Light Pattern",
+        description="Independent screentone texture for this light's lit areas",
+        items=[
+            ('NONE', "Solid", "Clean light, no texture"),
+            ('DOTS', "Dots", "Halftone manga dots"),
+            ('HATCH', "Hatch", "Parallel ink hatching lines"),
+            ('CROSS', "Cross", "Cross-hatching lattice"),
+            ('NOISE', "Noise", "Organic brush grain"),
+            ('IMAGE', "Image", "Custom brush texture image"),
+        ],
+        default='NONE',
+        update=_on_light_prop_update,
+    )
+    light_image: bpy.props.PointerProperty(
+        name="Light Pattern Image",
+        description="Custom brush texture for this light's lit areas (falls back to shadow image)",
+        type=bpy.types.Image,
+        update=_on_light_prop_update,
+    )
+    light_pattern_scale: bpy.props.FloatProperty(
+        name="Light Pattern Scale",
+        description="Density of the light pattern texture on screen",
+        default=40.0,
+        min=1.0, max=256.0,
+        update=_on_light_prop_update,
+    )
+    light_pattern_blur: bpy.props.FloatProperty(
+        name="Light Pattern Blur",
+        description="Softness of the light pattern edges (0 = sharp print contours, 1 = soft grain)",
+        default=0.25,
+        min=0.0, max=1.0,
+        subtype='FACTOR',
+        update=_on_light_prop_update,
+    )
     pattern_blur: bpy.props.FloatProperty(
         name="Pattern Blur",
         description="Softness of the pattern edges (0 = sharp print contours, 1 = soft grain)",
@@ -387,6 +430,10 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
             l1.pattern = 'NONE'
             l1.pattern_scale = 40.0
             l1.pattern_strength = 0.6
+            l1.pattern_light_strength = 0.0
+            l1.light_pattern = 'NONE'
+            l1.light_pattern_scale = 40.0
+            l1.light_pattern_blur = 0.25
             l1.pattern_blur = 0.25
 
         ctrl = _create_or_ensure_light_ctrl(context, mesh_obj, mesh_obj.anime_lights[0], index=0)
@@ -517,6 +564,10 @@ class ANIME_OT_light_add(bpy.types.Operator):
         item.pattern = 'NONE'
         item.pattern_scale = 40.0
         item.pattern_strength = 0.6
+        item.pattern_light_strength = 0.0
+        item.light_pattern = 'NONE'
+        item.light_pattern_scale = 40.0
+        item.light_pattern_blur = 0.25
         item.pattern_blur = 0.25
 
         ctrl = _create_or_ensure_light_ctrl(context, mesh, item, index=idx)
@@ -803,86 +854,6 @@ class ANIME_OT_light_select(bpy.types.Operator):
         return {'CANCELLED'}
 
 
-class ANIME_OT_apply_preset(bpy.types.Operator):
-    """Apply a styled color preset to the active Anime Shader"""
-    bl_idname = "anime.apply_preset"
-    bl_label = "Apply Preset"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    preset: bpy.props.EnumProperty(
-        name="Preset",
-        items=[
-            ('CLASSIC', "Classic Cel", "Sharp 2-tone anime"),
-            ('GHIBLI', "Soft Ghibli", "Warm watercolor-style"),
-            ('SUNSET', "Warm Sunset", "Golden light, violet shadow"),
-            ('CYBER', "Cyberpunk", "Neon with dark shadows"),
-        ],
-        default='CLASSIC'
-    )
-
-    @classmethod
-    def poll(cls, context):
-        mesh = _resolve_mesh(context)
-        return mesh is not None and mesh.active_material and find_anime_toon_node(mesh.active_material) is not None
-
-    def execute(self, context):
-        mesh = _resolve_mesh(context)
-        node = find_anime_toon_node(mesh.active_material) if mesh else None
-        if not node:
-            self.report({'WARNING'}, "No Anime Shader found.")
-            return {'CANCELLED'}
-
-        presets = {
-            'CLASSIC': {
-                'Base Color':       (0.92, 0.78, 0.68, 1.0),
-                'Shadow Color':     (0.55, 0.42, 0.52, 1.0),
-                'Shadow Position':  0.4,
-                'Shadow Softness':  0.08,
-                'Specular Size':    0.10,
-            },
-            'GHIBLI': {
-                'Base Color':       (0.96, 0.84, 0.72, 1.0),
-                'Shadow Color':     (0.72, 0.54, 0.50, 1.0),
-                'Shadow Position':  0.3,
-                'Shadow Softness':  0.25,
-                'Specular Size':    0.0,
-            },
-            'SUNSET': {
-                'Base Color':       (1.0, 0.74, 0.55, 1.0),
-                'Shadow Color':     (0.36, 0.20, 0.44, 1.0),
-                'Shadow Position':  0.35,
-                'Shadow Softness':  0.06,
-                'Specular Size':    0.15,
-            },
-            'CYBER': {
-                'Base Color':       (0.18, 0.76, 0.96, 1.0),
-                'Shadow Color':     (0.06, 0.04, 0.20, 1.0),
-                'Shadow Position':  0.35,
-                'Shadow Softness':  0.04,
-                'Specular Size':    0.20,
-            },
-        }
-
-        chosen = presets[self.preset]
-        if 'Base Color' in node.inputs:
-            node.inputs['Base Color'].default_value = chosen['Base Color']
-        if 'Shadow Color' in node.inputs:
-            node.inputs['Shadow Color'].default_value = chosen['Shadow Color']
-
-        # Update active light tuning
-        if mesh and mesh.anime_lights:
-            idx = mesh.anime_active_light_index
-            if 0 <= idx < len(mesh.anime_lights):
-                l = mesh.anime_lights[idx]
-                l.shadow_position = chosen['Shadow Position']
-                l.shadow_softness = chosen['Shadow Softness']
-                l.specular_size = chosen['Specular Size']
-            sync_material_lights(mesh)
-
-        self.report({'INFO'}, f"Preset '{self.preset}' applied!")
-        return {'FINISHED'}
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # INVERTED HULL OUTLINE OPERATORS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1098,7 +1069,6 @@ classes = (
     AnimeLightItem,
     ANIME_OT_apply_shader,
     ANIME_OT_remove_shader,
-    ANIME_OT_apply_preset,
     ANIME_OT_light_add,
     ANIME_OT_light_move,
     ANIME_OT_light_remove,
