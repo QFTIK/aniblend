@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "aniblend"
-version = "1.1.0"
+version = "1.2.0"
 name = "AniBlend"
 tagline = "Fast Anime Cel-Shading and Stylized Outlines in Blender"
 maintainer = "Oleksii"
