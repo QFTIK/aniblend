@@ -15,8 +15,11 @@ from .shader_builder import (
 from .operators import sync_stray_outline
 
 
-def _get_mesh_and_node(context):
-    """Resolve the mesh and anime toon node from active object (mesh or controller)."""
+def _get_mesh_and_node(context, sync_index=True):
+    """Resolve the mesh and anime toon node from active object (mesh or controller).
+
+    :param sync_index: when False, never writes to ID classes (safe for poll()).
+    """
     obj = context.active_object
     mesh = None
 
@@ -26,11 +29,16 @@ def _get_mesh_and_node(context):
             if candidate and candidate.name in bpy.data.objects:
                 mesh = candidate
                 # If active object is a light controller or pointer, sync active light index!
-                for idx, l in enumerate(mesh.anime_lights):
-                    if l.ctrl_obj == obj or (l.ctrl_obj and f"{l.ctrl_obj.name}_Pointer" == obj.name):
-                        if mesh.anime_active_light_index != idx:
-                            mesh.anime_active_light_index = idx
-                        break
+                # poll() context forbids writes to ID classes, so skip sync there.
+                if sync_index:
+                    try:
+                        for idx, l in enumerate(mesh.anime_lights):
+                            if l.ctrl_obj == obj or (l.ctrl_obj and f"{l.ctrl_obj.name}_Pointer" == obj.name):
+                                if mesh.anime_active_light_index != idx:
+                                    mesh.anime_active_light_index = idx
+                                break
+                    except (AttributeError, RuntimeError):
+                        pass
         elif obj.type in {'MESH', 'CURVE', 'FONT', 'SURFACE'}:
             mesh = obj
 
@@ -250,7 +258,7 @@ class ANIME_PT_material_colors(bpy.types.Panel):
     def poll(cls, context):
         if context.scene.anime_active_tab != 'LIGHT':
             return False
-        mesh, node = _get_mesh_and_node(context)
+        mesh, node = _get_mesh_and_node(context, sync_index=False)
         return mesh is not None and node is not None
 
     def draw_header(self, context):
@@ -331,7 +339,7 @@ class ANIME_PT_light_sources(bpy.types.Panel):
     def poll(cls, context):
         if context.scene.anime_active_tab != 'LIGHT':
             return False
-        mesh, node = _get_mesh_and_node(context)
+        mesh, node = _get_mesh_and_node(context, sync_index=False)
         return mesh is not None and node is not None
 
     def draw_header(self, context):
@@ -432,7 +440,7 @@ class ANIME_PT_outline_settings(bpy.types.Panel):
     def poll(cls, context):
         if context.scene.anime_active_tab != 'OUTLINE':
             return False
-        mesh, _ = _get_mesh_and_node(context)
+        mesh, _ = _get_mesh_and_node(context, sync_index=False)
         return mesh is not None and mesh.modifiers.get(OUTLINE_MOD_NAME) is not None
 
     def draw_header(self, context):
@@ -467,7 +475,7 @@ class ANIME_PT_outline_style(bpy.types.Panel):
     def poll(cls, context):
         if context.scene.anime_active_tab != 'OUTLINE':
             return False
-        mesh, _ = _get_mesh_and_node(context)
+        mesh, _ = _get_mesh_and_node(context, sync_index=False)
         return mesh is not None and mesh.modifiers.get(OUTLINE_MOD_NAME) is not None
 
     def draw_header(self, context):
@@ -505,7 +513,7 @@ class ANIME_PT_outline_stray(bpy.types.Panel):
     def poll(cls, context):
         if context.scene.anime_active_tab != 'OUTLINE':
             return False
-        mesh, _ = _get_mesh_and_node(context)
+        mesh, _ = _get_mesh_and_node(context, sync_index=False)
         return mesh is not None and mesh.modifiers.get(OUTLINE_MOD_NAME) is not None
 
     def draw_header(self, context):
