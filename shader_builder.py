@@ -32,6 +32,11 @@ def _get_light_socket_name(idx, prop):
             'enabled': 'L1 Enabled',
             'opacity': 'L1 Opacity',
             'cover': 'L1 Cover',
+            'pattern': 'Shadow Pattern',
+            'pscale': 'Pattern Scale',
+            'pstrength': 'Pattern Strength',
+            'pblur': 'Pattern Blur',
+            'mask': 'Shadow Mask',
         }
         return mapping.get(prop, f"L1 {prop.capitalize()}")
     else:
@@ -46,6 +51,11 @@ def _get_light_socket_name(idx, prop):
             'enabled': f'L{i} Enabled',
             'opacity': f'L{i} Opacity',
             'cover': f'L{i} Cover',
+            'pattern': f'L{i} Pattern',
+            'pscale': f'L{i} Pattern Scale',
+            'pstrength': f'L{i} Pattern Strength',
+            'pblur': f'L{i} Pattern Blur',
+            'mask': f'L{i} Shadow Mask',
         }
         return mapping.get(prop, f"L{i} {prop.capitalize()}")
 
@@ -117,7 +127,37 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         s_cov.min_value = 0.0
         s_cov.max_value = 1.0
 
+        # 3. Per-Light Screentone Sockets (v1.2: procedural shadow pattern per light)
+        pat_name = _get_light_socket_name(idx, 'pattern')
+        psc_name = _get_light_socket_name(idx, 'pscale')
+        pst_name = _get_light_socket_name(idx, 'pstrength')
+
+        s_pat = iface.new_socket(name=pat_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_pat.default_value = 0.0
+        s_pat.min_value = 0.0
+        s_pat.max_value = 5.0
+
+        s_psc = iface.new_socket(name=psc_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_psc.default_value = 40.0
+        s_psc.min_value = 1.0
+        s_psc.max_value = 256.0
+
+        s_pst = iface.new_socket(name=pst_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_pst.default_value = 0.6
+        s_pst.min_value = 0.0
+        s_pst.max_value = 1.0
+
+        pbl_name = _get_light_socket_name(idx, 'pblur')
+        s_pbl = iface.new_socket(name=pbl_name, in_out='INPUT', socket_type='NodeSocketFloat')
+        s_pbl.default_value = 0.25
+        s_pbl.min_value = 0.0
+        s_pbl.max_value = 1.0
+
     iface.new_socket(name="Shader", in_out='OUTPUT', socket_type='NodeSocketShader')
+    iface.new_socket(name="Color", in_out='OUTPUT', socket_type='NodeSocketColor')
+    for idx in range(num_lights):
+        msk_name = _get_light_socket_name(idx, 'mask')
+        iface.new_socket(name=msk_name, in_out='OUTPUT', socket_type='NodeSocketFloat')
 
     # Build Internal Node Network
     nodes = ng.nodes
@@ -137,6 +177,9 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
     reflect.location = (-1100, -400)
     links.new(geom.outputs['Incoming'], reflect.inputs[0])
     links.new(geom.outputs['Normal'], reflect.inputs[1])
+
+    tex_obj = nodes.new('ShaderNodeTexCoord')
+    tex_obj.location = (-1300, -200)
 
     cel_factors = []
     tone_colors = []
@@ -207,7 +250,208 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
         links.new(c_en.outputs['Value'], mix_tone.inputs[0])
         links.new(node_in.outputs[shd_name], mix_tone.inputs[6])
         links.new(scale_lit.outputs['Vector'], mix_tone.inputs[7])
-        tone_colors.append(mix_tone.outputs[2])
+
+        # ── Shadow screentone pattern (v1.2): procedural texture inside shadow ──
+        pat_name = _get_light_socket_name(idx, 'pattern')
+        psc_name = _get_light_socket_name(idx, 'pscale')
+        pst_name = _get_light_socket_name(idx, 'pstrength')
+        pbl_name = _get_light_socket_name(idx, 'pblur')
+        msk_name = _get_light_socket_name(idx, 'mask')
+        y_pat = y_off - 700
+
+        uv_scale = nodes.new('ShaderNodeVectorMath')
+        uv_scale.operation = 'SCALE'
+        uv_scale.location = (-1050, y_pat)
+        # Screen-space sampling: screentone stays fixed to camera like real manga tone
+        links.new(tex_obj.outputs['Window'], uv_scale.inputs[0])
+        links.new(node_in.outputs[psc_name], uv_scale.inputs[3])
+
+        # Edge softness shared by all patterns: w = blur * 0.4 (+ epsilon keeps blur 0 defined)
+        w_mul = nodes.new('ShaderNodeMath')
+        w_mul.operation = 'MULTIPLY'
+        w_mul.location = (-1050, y_pat - 600)
+        links.new(node_in.outputs[pbl_name], w_mul.inputs[0])
+        w_mul.inputs[1].default_value = 0.4
+        w_node = nodes.new('ShaderNodeMath')
+        w_node.operation = 'ADD'
+        w_node.location = (-850, y_pat - 600)
+        links.new(w_mul.outputs['Value'], w_node.inputs[0])
+        w_node.inputs[1].default_value = 0.001
+        w_out = w_node.outputs['Value']
+
+        def _edge(center, x, y):
+            lo = nodes.new('ShaderNodeMath')
+            lo.operation = 'SUBTRACT'
+            lo.location = (x, y)
+            lo.inputs[0].default_value = center
+            links.new(w_out, lo.inputs[1])
+            hi = nodes.new('ShaderNodeMath')
+            hi.operation = 'ADD'
+            hi.location = (x + 200, y)
+            hi.inputs[0].default_value = center
+            links.new(w_out, hi.inputs[1])
+            return lo, hi
+
+        # Dots (halftone): Voronoi F1 distance -> dot mask
+        vor = nodes.new('ShaderNodeTexVoronoi')
+        vor.feature = 'F1'
+        vor.inputs['Scale'].default_value = 1.0
+        vor.location = (-850, y_pat)
+        links.new(uv_scale.outputs['Vector'], vor.inputs['Vector'])
+
+        dots_map = nodes.new('ShaderNodeMapRange')
+        dots_map.interpolation_type = 'SMOOTHSTEP'
+        dots_map.clamp = True
+        dots_map.location = (-650, y_pat)
+        links.new(vor.outputs['Distance'], dots_map.inputs['Value'])
+        dots_lo, dots_hi = _edge(0.45, -850, y_pat - 750)
+        links.new(dots_lo.outputs['Value'], dots_map.inputs['From Min'])
+        links.new(dots_hi.outputs['Value'], dots_map.inputs['From Max'])
+
+        dots = nodes.new('ShaderNodeMath')
+        dots.operation = 'SUBTRACT'
+        dots.inputs[0].default_value = 1.0
+        dots.location = (-450, y_pat)
+        links.new(dots_map.outputs['Result'], dots.inputs[1])
+
+        # Hatch: Wave bands X -> lines
+        wave_x = nodes.new('ShaderNodeTexWave')
+        wave_x.wave_type = 'BANDS'
+        wave_x.bands_direction = 'X'
+        wave_x.inputs['Scale'].default_value = 1.0
+        wave_x.location = (-850, y_pat - 150)
+        links.new(uv_scale.outputs['Vector'], wave_x.inputs['Vector'])
+
+        hatch = nodes.new('ShaderNodeMapRange')
+        hatch.interpolation_type = 'SMOOTHSTEP'
+        hatch.clamp = True
+        hatch.location = (-650, y_pat - 150)
+        links.new(wave_x.outputs['Fac'], hatch.inputs['Value'])
+        hatch_lo, hatch_hi = _edge(0.5, -850, y_pat - 900)
+        links.new(hatch_lo.outputs['Value'], hatch.inputs['From Min'])
+        links.new(hatch_hi.outputs['Value'], hatch.inputs['From Max'])
+
+        # Cross-hatch: Wave bands Y AND hatch
+        wave_y = nodes.new('ShaderNodeTexWave')
+        wave_y.wave_type = 'BANDS'
+        wave_y.bands_direction = 'Y'
+        wave_y.inputs['Scale'].default_value = 1.0
+        wave_y.location = (-850, y_pat - 300)
+        links.new(uv_scale.outputs['Vector'], wave_y.inputs['Vector'])
+
+        hatch_y = nodes.new('ShaderNodeMapRange')
+        hatch_y.interpolation_type = 'SMOOTHSTEP'
+        hatch_y.clamp = True
+        hatch_y.location = (-650, y_pat - 300)
+        links.new(wave_y.outputs['Fac'], hatch_y.inputs['Value'])
+        hatch_y_lo, hatch_y_hi = _edge(0.5, -850, y_pat - 1050)
+        links.new(hatch_y_lo.outputs['Value'], hatch_y.inputs['From Min'])
+        links.new(hatch_y_hi.outputs['Value'], hatch_y.inputs['From Max'])
+
+        cross = nodes.new('ShaderNodeMath')
+        cross.operation = 'MULTIPLY'
+        cross.location = (-450, y_pat - 225)
+        links.new(hatch.outputs['Result'], cross.inputs[0])
+        links.new(hatch_y.outputs['Result'], cross.inputs[1])
+
+        # Grain: Noise -> soft threshold
+        grain = nodes.new('ShaderNodeTexNoise')
+        grain.inputs['Scale'].default_value = 1.0
+        grain.inputs['Detail'].default_value = 2.0
+        grain.location = (-850, y_pat - 450)
+        links.new(uv_scale.outputs['Vector'], grain.inputs['Vector'])
+
+        grain_map = nodes.new('ShaderNodeMapRange')
+        grain_map.interpolation_type = 'SMOOTHSTEP'
+        grain_map.clamp = True
+        grain_map.location = (-650, y_pat - 450)
+        links.new(grain.outputs['Fac'], grain_map.inputs['Value'])
+        grain_lo, grain_hi = _edge(0.5, -850, y_pat - 1200)
+        links.new(grain_lo.outputs['Value'], grain_map.inputs['From Min'])
+        links.new(grain_hi.outputs['Value'], grain_map.inputs['From Max'])
+
+        # Pattern select: id 0=None 1=Dots 2=Hatch 3=Cross 4=Noise (5=Image handled at material level)
+        def _pat_gate(pid, src, x, y):
+            gate = nodes.new('ShaderNodeMath')
+            gate.operation = 'COMPARE'
+            gate.location = (x, y)
+            links.new(node_in.outputs[pat_name], gate.inputs[0])
+            gate.inputs[1].default_value = float(pid)
+            gate.inputs[2].default_value = 0.2
+            gated = nodes.new('ShaderNodeMath')
+            gated.operation = 'MULTIPLY'
+            gated.location = (x + 200, y)
+            links.new(src, gated.inputs[0])
+            links.new(gate.outputs['Value'], gated.inputs[1])
+            return gated.outputs['Value']
+
+        m_sel = _pat_gate(1, dots.outputs['Value'], -250, y_pat)
+        for _pid, _src in ((2, hatch.outputs['Result']),
+                           (3, cross.outputs['Value']),
+                           (4, grain_map.outputs['Result'])):
+            # chain: mix(prev, candidate, gate_pid)
+            _sel = nodes.new('ShaderNodeMix')
+            _sel.data_type = 'FLOAT'
+            _sel.location = (-50, y_pat - 550)
+            _gate = nodes.new('ShaderNodeMath')
+            _gate.operation = 'COMPARE'
+            _gate.location = (-250, y_pat - 150 * _pid)
+            links.new(node_in.outputs[pat_name], _gate.inputs[0])
+            _gate.inputs[1].default_value = float(_pid)
+            _gate.inputs[2].default_value = 0.2
+            links.new(_gate.outputs['Value'], _sel.inputs[0])
+            links.new(m_sel, _sel.inputs[2])
+            links.new(_src, _sel.inputs[3])
+            m_sel = _sel.outputs[0]
+
+        # Apply pattern only inside shadow: tone = mix(tone, lit, pattern * strength * (1 - cel))
+        inv_cel = nodes.new('ShaderNodeMath')
+        inv_cel.operation = 'SUBTRACT'
+        inv_cel.inputs[0].default_value = 1.0
+        inv_cel.location = (150, y_pat - 550)
+        links.new(c_en.outputs['Value'], inv_cel.inputs[1])
+
+        k1 = nodes.new('ShaderNodeMath')
+        k1.operation = 'MULTIPLY'
+        k1.location = (350, y_pat - 550)
+        links.new(m_sel, k1.inputs[0])
+        links.new(node_in.outputs[pst_name], k1.inputs[1])
+
+        k2 = nodes.new('ShaderNodeMath')
+        k2.operation = 'MULTIPLY'
+        k2.location = (550, y_pat - 550)
+        links.new(k1.outputs['Value'], k2.inputs[0])
+        links.new(inv_cel.outputs['Value'], k2.inputs[1])
+
+        tone_pat = nodes.new('ShaderNodeMix')
+        tone_pat.data_type = 'RGBA'
+        tone_pat.blend_type = 'MIX'
+        tone_pat.location = (750, y_off)
+        links.new(k2.outputs['Value'], tone_pat.inputs[0])
+        links.new(mix_tone.outputs[2], tone_pat.inputs[6])
+        links.new(scale_lit.outputs['Vector'], tone_pat.inputs[7])
+        tone_colors.append(tone_pat.outputs[2])
+
+        # Shadow mask output for material-level image patterns: (1 - raw_cel) * enabled * opacity
+        opc_name = _get_light_socket_name(idx, 'opacity')
+        m_not = nodes.new('ShaderNodeMath')
+        m_not.operation = 'SUBTRACT'
+        m_not.inputs[0].default_value = 1.0
+        m_not.location = (950, y_pat - 550)
+        links.new(map_c.outputs['Result'], m_not.inputs[1])
+
+        m_en = nodes.new('ShaderNodeMath')
+        m_en.operation = 'MULTIPLY'
+        m_en.location = (1150, y_pat - 550)
+        links.new(m_not.outputs['Value'], m_en.inputs[0])
+        links.new(node_in.outputs[en_name], m_en.inputs[1])
+
+        m_op = nodes.new('ShaderNodeMath')
+        m_op.operation = 'MULTIPLY'
+        m_op.location = (1350, y_pat - 550)
+        links.new(m_en.outputs['Value'], m_op.inputs[0])
+        links.new(node_in.outputs[opc_name], m_op.inputs[1])
+        links.new(m_op.outputs['Value'], node_out.inputs[msk_name])
 
         # Specular Highlight
         dot_s = nodes.new('ShaderNodeVectorMath')
@@ -333,10 +577,12 @@ def _build_multilight_toon_nodegroup(ng, num_lights):
     emit.location = (650 + num_lights * 380, 0)
     links.new(final_color.outputs[2], emit.inputs['Color'])
     links.new(emit.outputs['Emission'], node_out.inputs['Shader'])
+    # Flat color output for material-level image screentone overlays (v1.2)
+    links.new(final_color.outputs[2], node_out.inputs['Color'])
 
-    # Stamp the node group with its light count and schema version (v3 = per-light shadow)
+    # Stamp the node group with its light count and schema version (v5 = screen-space screentone + blur)
     ng["_anime_num_lights"] = num_lights
-    ng["_anime_schema_ver"] = 3
+    ng["_anime_schema_ver"] = 5
 
 
 def _count_ng_lights(ng):
@@ -360,7 +606,7 @@ def get_or_create_multilight_toon_nodegroup(num_lights=1):
     if not ng or ng.bl_idname != "ShaderNodeTree":
         ng = bpy.data.node_groups.new(name=name, type="ShaderNodeTree")
         needs_build = True
-    elif _count_ng_lights(ng) != num_lights or ng.get("_anime_schema_ver", 0) != 3:
+    elif _count_ng_lights(ng) != num_lights or ng.get("_anime_schema_ver", 0) != 5:
         needs_build = True
 
     if needs_build:
@@ -395,6 +641,140 @@ def setup_single_light_drivers(normal_node, ctrl_empty):
         drv.expression = 'v'
 
 
+
+
+_PATTERN_IDS = {
+    'NONE': 0.0,
+    'DOTS': 1.0,
+    'HATCH': 2.0,
+    'CROSS': 3.0,
+    'NOISE': 4.0,
+    'IMAGE': 5.0,
+}
+
+_PAT_PREFIX = "AnimePat_"
+
+
+def _sync_pattern_image_overlay(mat, toon_node, mesh_obj):
+    """Material-level screentone for lights using a custom brush image (pattern == IMAGE).
+
+    The shared node group cannot hold per-mesh images, so image sampling lives in the
+    material tree, driven by the group's per-light Shadow Mask outputs. Idempotent:
+    rebuilds the overlay chain on every sync and removes it when unused.
+    """
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+
+    def _rm(node):
+        try:
+            nodes.remove(node)
+        except Exception:
+            pass
+
+    def _restore_shader_path():
+        out_node = next((n for n in nodes if n.type == 'OUTPUT_MATERIAL'), None)
+        if out_node is not None and 'Shader' in toon_node.outputs:
+            try:
+                links.new(toon_node.outputs['Shader'], out_node.inputs['Surface'])
+            except Exception:
+                pass
+
+    img_lights = []
+    if mesh_obj is not None and hasattr(mesh_obj, "anime_lights"):
+        for idx, li in enumerate(mesh_obj.anime_lights):
+            if getattr(li, 'pattern', 'NONE') != 'IMAGE':
+                continue
+            img = getattr(li, 'pattern_image', None)
+            if img is not None and img.name in bpy.data.images:
+                img_lights.append((idx, li))
+
+    stale = [n for n in nodes if n.name.startswith(_PAT_PREFIX)]
+    if not img_lights or 'Color' not in toon_node.outputs:
+        for n in stale:
+            _rm(n)
+        _restore_shader_path()
+        return
+
+    keep = set()
+
+    def _get(name, ntype, x, y):
+        n = nodes.get(name)
+        if n is None:
+            n = nodes.new(ntype)
+            n.name = name
+            n.location = (x, y)
+        keep.add(name)
+        return n
+
+    uv = _get(_PAT_PREFIX + "UV", 'ShaderNodeTexCoord', 200, -600)
+    # Screen-space sampling: brush texture stays fixed to camera like real screentone
+    uv_out = uv.outputs['Window']
+
+    cur = toon_node.outputs['Color']
+    for idx, li in img_lights:
+        msk_name = _get_light_socket_name(idx, 'mask')
+        if msk_name not in toon_node.outputs:
+            continue
+        tag = f"{idx + 1}"
+
+        tex = _get(_PAT_PREFIX + f"Tex_{tag}", 'ShaderNodeTexImage', 400 + idx * 60, -600)
+        tex.image = li.pattern_image
+        try:
+            links.new(uv_out, tex.inputs['Vector'])
+        except Exception:
+            pass
+
+        bw = _get(_PAT_PREFIX + f"BW_{tag}", 'ShaderNodeRGBToBW', 400 + idx * 60, -750)
+        try:
+            links.new(tex.outputs['Color'], bw.inputs['Color'])
+        except Exception:
+            pass
+
+        k1 = _get(_PAT_PREFIX + f"K1_{tag}", 'ShaderNodeMath', 600 + idx * 60, -600)
+        k1.operation = 'MULTIPLY'
+        k1.inputs[1].default_value = getattr(li, 'pattern_strength', 0.6)
+        try:
+            links.new(toon_node.outputs[msk_name], k1.inputs[0])
+        except Exception:
+            pass
+
+        k2 = _get(_PAT_PREFIX + f"K2_{tag}", 'ShaderNodeMath', 800 + idx * 60, -600)
+        k2.operation = 'MULTIPLY'
+        try:
+            links.new(k1.outputs['Value'], k2.inputs[0])
+            links.new(bw.outputs['Val'], k2.inputs[1])
+        except Exception:
+            pass
+
+        mx = _get(_PAT_PREFIX + f"Mix_{tag}", 'ShaderNodeMix', 1000 + idx * 60, -600)
+        mx.data_type = 'RGBA'
+        mx.blend_type = 'MIX'
+        try:
+            mx.inputs[7].default_value = tuple(li.light_color)
+        except Exception:
+            pass
+        try:
+            links.new(k2.outputs['Value'], mx.inputs[0])
+            links.new(cur, mx.inputs[6])
+        except Exception:
+            pass
+        cur = mx.outputs[2]
+
+    emis = _get(_PAT_PREFIX + "Emission", 'ShaderNodeEmission', 1300, -600)
+    try:
+        links.new(cur, emis.inputs['Color'])
+    except Exception:
+        pass
+    out_node = next((n for n in nodes if n.type == 'OUTPUT_MATERIAL'), None)
+    if out_node is not None:
+        try:
+            links.new(emis.outputs['Emission'], out_node.inputs['Surface'])
+        except Exception:
+            pass
+
+    for n in stale:
+        if n.name not in keep:
+            _rm(n)
 
 
 def sync_material_lights(mesh_obj):
@@ -506,6 +886,21 @@ def sync_material_lights(mesh_obj):
                     toon_node.inputs[opc_socket].default_value = light_item.opacity
                 if cov_socket in toon_node.inputs and hasattr(light_item, "blend_mode"):
                     toon_node.inputs[cov_socket].default_value = 1.0 if light_item.blend_mode == 'COVER' else 0.0
+
+                # Screentone pattern sockets (v1.2)
+                pat_socket = _get_light_socket_name(idx, 'pattern')
+                psc_socket = _get_light_socket_name(idx, 'pscale')
+                pst_socket = _get_light_socket_name(idx, 'pstrength')
+                if pat_socket in toon_node.inputs:
+                    toon_node.inputs[pat_socket].default_value = _PATTERN_IDS.get(
+                        getattr(light_item, 'pattern', 'NONE'), 0.0)
+                if psc_socket in toon_node.inputs:
+                    toon_node.inputs[psc_socket].default_value = getattr(light_item, 'pattern_scale', 40.0)
+                if pst_socket in toon_node.inputs:
+                    toon_node.inputs[pst_socket].default_value = getattr(light_item, 'pattern_strength', 0.6)
+                pbl_socket = _get_light_socket_name(idx, 'pblur')
+                if pbl_socket in toon_node.inputs:
+                    toon_node.inputs[pbl_socket].default_value = getattr(light_item, 'pattern_blur', 0.25)
             else:
                 # No light source item (0 lights active, unlit flat shading)
                 en_socket = _get_light_socket_name(idx, 'enabled')
@@ -524,6 +919,9 @@ def sync_material_lights(mesh_obj):
                         mat.node_tree.nodes.remove(n)
                 except Exception:
                     pass
+
+        # Reconcile material-level image screentone overlay (v1.2)
+        _sync_pattern_image_overlay(mat, toon_node, mesh_obj)
 
 
 def create_anime_material(name="M_Anime_Toon", num_lights=1):

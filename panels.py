@@ -423,6 +423,21 @@ class ANIME_PT_light_sources(bpy.types.Panel):
         col_sh.prop(active_light, "shadow_softness", text="Shadow Softness", slider=True)
         col_sh.prop(active_light, "specular_size", text="Highlight Size", slider=True)
 
+        # Shadow Pattern (Screentone)
+        layout.separator(factor=0.3)
+        col_pat = layout.column(align=True)
+        col_pat.label(text="Shadow Pattern", icon='TEXTURE')
+        col_pat.prop(active_light, "pattern", text="")
+        if active_light.pattern != 'NONE':
+            col_pat.prop(active_light, "pattern_scale", text="Pattern Scale", slider=True)
+            col_pat.prop(active_light, "pattern_strength", text="Pattern Strength", slider=True)
+        if active_light.pattern in {'DOTS', 'HATCH', 'CROSS', 'NOISE'}:
+            col_pat.prop(active_light, "pattern_blur", text="Pattern Blur", slider=True)
+        if active_light.pattern == 'IMAGE':
+            col_pat.template_ID(active_light, "pattern_image", open="image.open")
+            if not active_light.pattern_image:
+                col_pat.label(text="Pick a brush texture image", icon='INFO')
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OUTLINE TAB  —  Line Appearance

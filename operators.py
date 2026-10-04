@@ -139,6 +139,49 @@ class AnimeLightItem(bpy.types.PropertyGroup):
         default='COVER',
         update=_on_light_prop_update,
     )
+    pattern: bpy.props.EnumProperty(
+        name="Shadow Pattern",
+        description="Screentone texture inside this light's shadow (flat, procedural, or custom brush image)",
+        items=[
+            ('NONE', "Solid", "Flat shadow fill, no texture"),
+            ('DOTS', "Dots", "Halftone manga dots"),
+            ('HATCH', "Hatch", "Parallel ink hatching lines"),
+            ('CROSS', "Cross", "Cross-hatching lattice"),
+            ('NOISE', "Noise", "Organic brush grain"),
+            ('IMAGE', "Image", "Custom brush texture image"),
+        ],
+        default='NONE',
+        update=_on_light_prop_update,
+    )
+    pattern_scale: bpy.props.FloatProperty(
+        name="Pattern Scale",
+        description="Density of the shadow pattern texture on screen",
+        default=40.0,
+        min=1.0, max=256.0,
+        update=_on_light_prop_update,
+    )
+    pattern_strength: bpy.props.FloatProperty(
+        name="Pattern Strength",
+        description="How strongly the pattern breaks up the flat shadow (0 = subtle, 1 = full texture)",
+        default=0.6,
+        min=0.0, max=1.0,
+        subtype='FACTOR',
+        update=_on_light_prop_update,
+    )
+    pattern_blur: bpy.props.FloatProperty(
+        name="Pattern Blur",
+        description="Softness of the pattern edges (0 = sharp print contours, 1 = soft grain)",
+        default=0.25,
+        min=0.0, max=1.0,
+        subtype='FACTOR',
+        update=_on_light_prop_update,
+    )
+    pattern_image: bpy.props.PointerProperty(
+        name="Pattern Image",
+        description="Custom brush texture used as this light's shadow when Pattern is Image",
+        type=bpy.types.Image,
+        update=_on_light_prop_update,
+    )
     ctrl_obj: bpy.props.PointerProperty(
         name="Controller",
         type=bpy.types.Object,
@@ -341,6 +384,10 @@ class ANIME_OT_apply_shader(bpy.types.Operator):
             l1.enabled = True
             l1.opacity = 1.0
             l1.blend_mode = 'COVER'
+            l1.pattern = 'NONE'
+            l1.pattern_scale = 40.0
+            l1.pattern_strength = 0.6
+            l1.pattern_blur = 0.25
 
         ctrl = _create_or_ensure_light_ctrl(context, mesh_obj, mesh_obj.anime_lights[0], index=0)
         mesh_obj.anime_active_light_index = 0
@@ -467,6 +514,10 @@ class ANIME_OT_light_add(bpy.types.Operator):
         item.enabled = True
         item.opacity = 1.0
         item.blend_mode = 'COVER'
+        item.pattern = 'NONE'
+        item.pattern_scale = 40.0
+        item.pattern_strength = 0.6
+        item.pattern_blur = 0.25
 
         ctrl = _create_or_ensure_light_ctrl(context, mesh, item, index=idx)
         mesh.anime_active_light_index = idx
