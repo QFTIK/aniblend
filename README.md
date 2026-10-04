@@ -1,12 +1,11 @@
-<img src="assets/logo.png" alt="AniBlend Logo" width="120" align="left" />
-
-# AniBlend
-
-**Anime cel-shading and inverted hull outlines for Blender 4.2+ / 5.x (EEVEE and Cycles).** Multi-light toon shader, per-light shadow tints, screen-space screentone, ink outlines and pencil sketch strokes — one click, live in the viewport.
+<table>
+  <tr>
+    <td width="140" valign="middle"><img src="assets/logo.png" alt="AniBlend Logo" width="130" /></td>
+    <td valign="middle"><h1>AniBlend</h1><p><strong>Anime cel-shading and inverted hull outlines for Blender 4.2+ / 5.x (EEVEE and Cycles).</strong><br />Multi-light toon shader, per-light shadow tints, screen-space screentone, ink outlines and pencil sketch strokes — one click, live in the viewport.</p></td>
+  </tr>
+</table>
 
 [![Release](https://img.shields.io/github/v/release/QFTIK/aniblend?label=Release&logo=github&color=ff69b4)](https://github.com/QFTIK/aniblend/releases) [![Downloads](https://img.shields.io/github/downloads/QFTIK/aniblend/total?label=Downloads&logo=github)](https://github.com/QFTIK/aniblend/releases) [![Blender](https://img.shields.io/badge/Blender-4.2_|_5.x-orange?logo=blender&logoColor=white)](https://www.blender.org) [![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg?logo=gnu)](LICENSE) [![Stars](https://img.shields.io/github/stars/QFTIK/aniblend?style=flat&label=Stars&logo=github)](https://github.com/QFTIK/aniblend/stargazers)
-
-<br clear="left" />
 
 ## Install
 
